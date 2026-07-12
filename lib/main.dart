@@ -255,6 +255,8 @@ class DestinationStorage {
 // Ekran listy miejsc
 // ---------------------------------------------------------------------------
 
+enum _ActivePanel { none, add, edit, info }
+
 class PlacesListScreen extends StatefulWidget {
   const PlacesListScreen({super.key, required this.settings});
 
@@ -269,7 +271,7 @@ class _PlacesListScreenState extends State<PlacesListScreen> {
   List<Destination> _destinations = [];
   Position? _currentPosition;
   String? _gpsStatusMessage;
-  bool _isEditMode = false;
+  _ActivePanel _activePanel = _ActivePanel.none;
 
   StreamSubscription<Position>? _positionSubscription;
 
@@ -333,18 +335,16 @@ class _PlacesListScreenState extends State<PlacesListScreen> {
     );
   }
 
-  Future<void> _openAddDialog() async {
-    final result = await showDialog<Destination>(
-      context: context,
-      builder: (context) => AddDestinationDialog(
-        palette: _palette,
-        currentPosition: _currentPosition,
-      ),
-    );
+  void _togglePanel(_ActivePanel panel) {
+    setState(() {
+      _activePanel = _activePanel == panel ? _ActivePanel.none : panel;
+    });
+  }
 
-    if (result == null) return;
-    await _storage.addDestination(result);
+  Future<void> _addDestination(Destination destination) async {
+    await _storage.addDestination(destination);
     await _loadDestinations();
+    setState(() => _activePanel = _ActivePanel.none);
   }
 
   Future<void> _openEditDialog(Destination destination) async {
@@ -373,7 +373,7 @@ class _PlacesListScreenState extends State<PlacesListScreen> {
   }
 
   void _openCompass(Destination destination) {
-    if (_isEditMode) return;
+    if (_activePanel != _ActivePanel.none) return;
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -385,114 +385,142 @@ class _PlacesListScreenState extends State<PlacesListScreen> {
     );
   }
 
-  void _openSettings() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => SettingsScreen(settings: widget.settings),
-      ),
-    );
-  }
-
   @override
   void dispose() {
     _positionSubscription?.cancel();
     super.dispose();
   }
 
+  String get _headerTitle {
+    switch (_activePanel) {
+      case _ActivePanel.add:
+        return 'Dodaj miejsce';
+      case _ActivePanel.info:
+        return 'Informacje';
+      case _ActivePanel.edit:
+      case _ActivePanel.none:
+        return 'Miejsca docelowe';
+    }
+  }
+
+  Widget _buildCenterContent() {
+    switch (_activePanel) {
+      case _ActivePanel.add:
+        return AddDestinationPanel(
+          palette: _palette,
+          currentPosition: _currentPosition,
+          onSave: _addDestination,
+        );
+      case _ActivePanel.info:
+        return InfoPanel(settings: widget.settings);
+      case _ActivePanel.edit:
+      case _ActivePanel.none:
+        return _buildDestinationsList();
+    }
+  }
+
+  Widget _buildDestinationsList() {
+    if (_destinations.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'Brak zapisanych miejsc.\nNaciśnij „Dodaj”, aby dodać pierwsze.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+        ),
+      );
+    }
+
+    final isEditMode = _activePanel == _ActivePanel.edit;
+
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      itemCount: _destinations.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        final destination = _destinations[index];
+        return _DestinationTile(
+          palette: _palette,
+          destination: destination,
+          isEditMode: isEditMode,
+          canMoveUp: index > 0,
+          canMoveDown: index < _destinations.length - 1,
+          onTap: () => _openCompass(destination),
+          onEdit: () => _openEditDialog(destination),
+          onMoveUp: () => _moveDestination(index, -1),
+          onMoveDown: () => _moveDestination(index, 1),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _palette.background,
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
-              child: Text(
-                'Miejsca docelowe',
-                style: Theme.of(context).textTheme.headlineLarge,
-              ),
-            ),
-            Expanded(
-              child: _destinations.isEmpty
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Text(
-                          'Brak zapisanych miejsc.\nNaciśnij „Dodaj”, aby dodać pierwsze.',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.headlineMedium,
+    return ListenableBuilder(
+      listenable: widget.settings,
+      builder: (context, _) {
+        return Scaffold(
+          backgroundColor: _palette.background,
+          body: SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+                  child: Text(
+                    _headerTitle,
+                    style: Theme.of(context).textTheme.headlineLarge,
+                  ),
+                ),
+                Expanded(child: _buildCenterContent()),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _ActionButton(
+                          palette: _palette,
+                          label: 'Dodaj',
+                          icon: Icons.add,
+                          isActive: _activePanel == _ActivePanel.add,
+                          onPressed: () => _togglePanel(_ActivePanel.add),
                         ),
                       ),
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      itemCount: _destinations.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
-                      itemBuilder: (context, index) {
-                        final destination = _destinations[index];
-                        return _DestinationTile(
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _ActionButton(
                           palette: _palette,
-                          destination: destination,
-                          isEditMode: _isEditMode,
-                          canMoveUp: index > 0,
-                          canMoveDown: index < _destinations.length - 1,
-                          onTap: () => _openCompass(destination),
-                          onEdit: () => _openEditDialog(destination),
-                          onMoveUp: () => _moveDestination(index, -1),
-                          onMoveDown: () => _moveDestination(index, 1),
-                        );
-                      },
-                    ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _ActionButton(
-                      palette: _palette,
-                      label: 'Dodaj',
-                      icon: Icons.add,
-                      isPrimary: true,
-                      onPressed: _openAddDialog,
-                    ),
+                          label: 'Edytuj',
+                          icon: Icons.edit,
+                          isActive: _activePanel == _ActivePanel.edit,
+                          onPressed: () => _togglePanel(_ActivePanel.edit),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _ActionButton(
+                          palette: _palette,
+                          label: 'Informacje',
+                          icon: Icons.info_outline,
+                          isActive: _activePanel == _ActivePanel.info,
+                          onPressed: () => _togglePanel(_ActivePanel.info),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _ActionButton(
-                      palette: _palette,
-                      label: 'Edytuj',
-                      icon: Icons.edit,
-                      isActive: _isEditMode,
-                      onPressed: () => setState(() => _isEditMode = !_isEditMode),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _ActionButton(
-                      palette: _palette,
-                      label: 'Ustawienia',
-                      icon: Icons.settings,
-                      onPressed: _openSettings,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+                _CurrentGpsBar(
+                  palette: _palette,
+                  position: _currentPosition,
+                  statusMessage: _gpsStatusMessage,
+                ),
+              ],
             ),
-            _CurrentGpsBar(
-              palette: _palette,
-              position: _currentPosition,
-              statusMessage: _gpsStatusMessage,
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -503,7 +531,6 @@ class _ActionButton extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.onPressed,
-    this.isPrimary = false,
     this.isActive = false,
   });
 
@@ -511,24 +538,14 @@ class _ActionButton extends StatelessWidget {
   final String label;
   final IconData icon;
   final VoidCallback onPressed;
-  final bool isPrimary;
   final bool isActive;
 
   @override
   Widget build(BuildContext context) {
-    final Color background;
-    final Color foreground;
-
-    if (isPrimary) {
-      background = palette.primaryButton;
-      foreground = Colors.white;
-    } else if (isActive) {
-      background = palette.accent;
-      foreground = palette.isDark ? Colors.black : Colors.white;
-    } else {
-      background = palette.buttonBackground;
-      foreground = palette.buttonForeground;
-    }
+    final background = isActive ? palette.accent : palette.buttonBackground;
+    final foreground = isActive
+        ? (palette.isDark ? Colors.black : Colors.white)
+        : palette.buttonForeground;
 
     return SizedBox(
       height: 64,
@@ -673,11 +690,11 @@ class _CurrentGpsBar extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Ekran ustawień
+// Panel informacji (w środku ekranu)
 // ---------------------------------------------------------------------------
 
-class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key, required this.settings});
+class InfoPanel extends StatelessWidget {
+  const InfoPanel({super.key, required this.settings});
 
   final AppSettings settings;
 
@@ -687,77 +704,43 @@ class SettingsScreen extends StatelessWidget {
       listenable: settings,
       builder: (context, _) {
         final palette = settings.palette;
-        return Scaffold(
-          backgroundColor: palette.background,
-          body: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SizedBox(
-                    height: 56,
-                    child: ElevatedButton.icon(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.arrow_back, size: 28),
-                      label: const Text(
-                        'Powrót do listy',
-                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: palette.buttonBackground,
-                        foregroundColor: palette.buttonForeground,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Ustawienia',
-                    style: Theme.of(context).textTheme.headlineLarge,
-                  ),
-                  const SizedBox(height: 32),
-                  Text(
-                    'Szadejkompas działa offline przy użyciu sygnału GPS, '
-                    'więc jest dokładniejszy gdy się poruszasz.',
-                    style: Theme.of(context).textTheme.bodyLarge,
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Aplikację stworzył K. Szadejko, dla E. Szadejko, '
-                    'by mogła odnaleźć M. Szadejko.',
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          fontStyle: FontStyle.italic,
-                        ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    'Motyw',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 16),
-                  _ThemeOption(
-                    palette: palette,
-                    label: 'Ciemny',
-                    description: 'Ciemne tło, jasnoniebieska strzałka',
-                    selected: palette.isDark,
-                    onTap: () => settings.setTheme(AppThemeMode.dark),
-                  ),
-                  const SizedBox(height: 12),
-                  _ThemeOption(
-                    palette: palette,
-                    label: 'Jasny',
-                    description: 'Białe tło, ciemnoniebieska strzałka',
-                    selected: !palette.isDark,
-                    onTap: () => settings.setTheme(AppThemeMode.light),
-                  ),
-                  const SizedBox(height: 24),
-                ],
+        return SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Szadejkompas działa offline przy użyciu sygnału GPS, '
+                'więc jest dokładniejszy gdy się poruszasz.',
+                style: Theme.of(context).textTheme.bodyLarge,
               ),
-            ),
+              const SizedBox(height: 24),
+              Text(
+                'Aplikację stworzył K. Szadejko, dla E. Szadejko, '
+                'by mogła odnaleźć M. Szadejko.',
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      fontStyle: FontStyle.italic,
+                    ),
+              ),
+              const SizedBox(height: 40),
+              Text('Motyw', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 16),
+              _ThemeOption(
+                palette: palette,
+                label: 'Ciemny',
+                description: 'Ciemne tło, jasnoniebieska strzałka',
+                selected: palette.isDark,
+                onTap: () => settings.setTheme(AppThemeMode.dark),
+              ),
+              const SizedBox(height: 12),
+              _ThemeOption(
+                palette: palette,
+                label: 'Jasny',
+                description: 'Białe tło, ciemnoniebieska strzałka',
+                selected: !palette.isDark,
+                onTap: () => settings.setTheme(AppThemeMode.light),
+              ),
+            ],
           ),
         );
       },
@@ -824,7 +807,7 @@ class _ThemeOption extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Dialogi: dodawanie i edycja miejsca
+// Panel dodawania i dialog edycji miejsca
 // ---------------------------------------------------------------------------
 
 enum _AddMode { currentGps, manual }
@@ -836,21 +819,23 @@ class _EditResult {
   final bool deleted;
 }
 
-class AddDestinationDialog extends StatefulWidget {
-  const AddDestinationDialog({
+class AddDestinationPanel extends StatefulWidget {
+  const AddDestinationPanel({
     super.key,
     required this.palette,
     required this.currentPosition,
+    required this.onSave,
   });
 
   final AppPalette palette;
   final Position? currentPosition;
+  final ValueChanged<Destination> onSave;
 
   @override
-  State<AddDestinationDialog> createState() => _AddDestinationDialogState();
+  State<AddDestinationPanel> createState() => _AddDestinationPanelState();
 }
 
-class _AddDestinationDialogState extends State<AddDestinationDialog> {
+class _AddDestinationPanelState extends State<AddDestinationPanel> {
   final _nameController = TextEditingController();
   final _latController = TextEditingController();
   final _lngController = TextEditingController();
@@ -870,8 +855,7 @@ class _AddDestinationDialogState extends State<AddDestinationDialog> {
     final coords = _parseCoordinates();
     if (coords == null) return;
 
-    Navigator.pop(
-      context,
+    widget.onSave(
       Destination(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         name: coords.name,
@@ -920,41 +904,44 @@ class _AddDestinationDialogState extends State<AddDestinationDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: widget.palette.dialogBackground,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20),
-      title: Text(
-        'Dodaj miejsce',
-        style: TextStyle(
-          fontSize: 26,
-          fontWeight: FontWeight.bold,
-          color: widget.palette.textPrimary,
-        ),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _DestinationForm(
+            palette: widget.palette,
+            nameController: _nameController,
+            latController: _latController,
+            lngController: _lngController,
+            mode: _mode,
+            errorMessage: _errorMessage,
+            onModeChanged: (mode) => setState(() {
+              _mode = mode;
+              _errorMessage = null;
+            }),
+          ),
+          const SizedBox(height: 24),
+          SizedBox(
+            height: 56,
+            child: ElevatedButton(
+              onPressed: _save,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: widget.palette.accent,
+                foregroundColor:
+                    widget.palette.isDark ? Colors.black : Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text(
+                'Zapisz',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+        ],
       ),
-      content: SingleChildScrollView(
-        child: _DestinationForm(
-          palette: widget.palette,
-          nameController: _nameController,
-          latController: _latController,
-          lngController: _lngController,
-          mode: _mode,
-          errorMessage: _errorMessage,
-          onModeChanged: (mode) => setState(() {
-            _mode = mode;
-            _errorMessage = null;
-          }),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: Text('Anuluj', style: TextStyle(fontSize: 20, color: widget.palette.accent)),
-        ),
-        TextButton(
-          onPressed: _save,
-          child: Text('Zapisz', style: TextStyle(fontSize: 20, color: widget.palette.accent)),
-        ),
-      ],
     );
   }
 }
