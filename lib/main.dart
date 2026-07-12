@@ -613,21 +613,26 @@ class _DestinationTile extends StatelessWidget {
           child: Row(
             children: [
               if (isEditMode) ...[
-                Column(
-                  children: [
-                    IconButton(
-                      onPressed: canMoveUp ? onMoveUp : null,
-                      icon: Icon(Icons.arrow_upward, color: palette.accent),
-                      iconSize: 28,
-                      tooltip: 'Przesuń w górę',
-                    ),
-                    IconButton(
-                      onPressed: canMoveDown ? onMoveDown : null,
-                      icon: Icon(Icons.arrow_downward, color: palette.accent),
-                      iconSize: 28,
-                      tooltip: 'Przesuń w dół',
-                    ),
-                  ],
+                SizedBox(
+                  width: 48,
+                  child: Column(
+                    children: [
+                      if (canMoveUp)
+                        IconButton(
+                          onPressed: onMoveUp,
+                          icon: Icon(Icons.arrow_upward, color: palette.accent),
+                          iconSize: 28,
+                          tooltip: 'Przesuń w górę',
+                        ),
+                      if (canMoveDown)
+                        IconButton(
+                          onPressed: onMoveDown,
+                          icon: Icon(Icons.arrow_downward, color: palette.accent),
+                          iconSize: 28,
+                          tooltip: 'Przesuń w dół',
+                        ),
+                    ],
+                  ),
                 ),
                 const SizedBox(width: 4),
               ],
@@ -844,11 +849,54 @@ class _AddDestinationPanelState extends State<AddDestinationPanel> {
   String? _errorMessage;
 
   @override
+  void initState() {
+    super.initState();
+    _fillFromGps();
+  }
+
+  @override
+  void didUpdateWidget(AddDestinationPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_mode == _AddMode.currentGps &&
+        widget.currentPosition != null &&
+        oldWidget.currentPosition != widget.currentPosition) {
+      _fillFromGps();
+    }
+  }
+
+  void _fillFromGps() {
+    final position = widget.currentPosition;
+    if (position == null) return;
+    _latController.text = position.latitude.toStringAsFixed(6);
+    _lngController.text = position.longitude.toStringAsFixed(6);
+  }
+
+  @override
   void dispose() {
     _nameController.dispose();
     _latController.dispose();
     _lngController.dispose();
     super.dispose();
+  }
+
+  void _copyCoordinates() {
+    final lat = _latController.text.trim();
+    final lng = _lngController.text.trim();
+    if (lat.isEmpty || lng.isEmpty) {
+      setState(() => _errorMessage = 'Brak współrzędnych do skopiowania.');
+      return;
+    }
+    Clipboard.setData(ClipboardData(text: '$lat, $lng'));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Skopiowano współrzędne',
+          style: TextStyle(color: widget.palette.textPrimary),
+        ),
+        backgroundColor: widget.palette.surface,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   void _save() {
@@ -872,34 +920,19 @@ class _AddDestinationPanelState extends State<AddDestinationPanel> {
       return null;
     }
 
-    double latitude;
-    double longitude;
-
-    if (_mode == _AddMode.currentGps) {
-      final position = widget.currentPosition;
-      if (position == null) {
-        setState(() => _errorMessage = 'Nie mam jeszcze pozycji GPS. Poczekaj chwilę.');
-        return null;
-      }
-      latitude = position.latitude;
-      longitude = position.longitude;
-    } else {
-      final lat = double.tryParse(_latController.text.replaceAll(',', '.'));
-      final lng = double.tryParse(_lngController.text.replaceAll(',', '.'));
-      if (lat == null || lng == null) {
-        setState(() => _errorMessage = 'Wpisz poprawne współrzędne (np. 53.444760).');
-        return null;
-      }
-      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-        setState(() => _errorMessage = 'Współrzędne są poza dozwolonym zakresem.');
-        return null;
-      }
-      latitude = lat;
-      longitude = lng;
+    final lat = double.tryParse(_latController.text.replaceAll(',', '.'));
+    final lng = double.tryParse(_lngController.text.replaceAll(',', '.'));
+    if (lat == null || lng == null) {
+      setState(() => _errorMessage = 'Wpisz poprawne współrzędne (np. 53.444760).');
+      return null;
+    }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      setState(() => _errorMessage = 'Współrzędne są poza dozwolonym zakresem.');
+      return null;
     }
 
     setState(() => _errorMessage = null);
-    return (name: name, latitude: latitude, longitude: longitude);
+    return (name: name, latitude: lat, longitude: lng);
   }
 
   @override
@@ -909,18 +942,116 @@ class _AddDestinationPanelState extends State<AddDestinationPanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _DestinationForm(
+          _StyledTextField(
             palette: widget.palette,
-            nameController: _nameController,
-            latController: _latController,
-            lngController: _lngController,
-            mode: _mode,
-            errorMessage: _errorMessage,
-            onModeChanged: (mode) => setState(() {
-              _mode = mode;
+            controller: _nameController,
+            label: 'Nazwa miejsca',
+          ),
+          const SizedBox(height: 20),
+          _ModeButton(
+            palette: widget.palette,
+            label: 'Zapisz tutaj, gdzie stoję',
+            icon: Icons.my_location,
+            selected: _mode == _AddMode.currentGps,
+            onTap: () => setState(() {
+              _mode = _AddMode.currentGps;
+              _errorMessage = null;
+              _fillFromGps();
+            }),
+          ),
+          const SizedBox(height: 12),
+          _ModeButton(
+            palette: widget.palette,
+            label: 'Wpisz współrzędne ręcznie',
+            icon: Icons.edit_location_alt,
+            selected: _mode == _AddMode.manual,
+            onTap: () => setState(() {
+              _mode = _AddMode.manual;
               _errorMessage = null;
             }),
           ),
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: widget.palette.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: widget.palette.accent, width: 2),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Współrzędne',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: widget.palette.accent,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _StyledTextField(
+                  palette: widget.palette,
+                  controller: _latController,
+                  label: 'Szerokość (np. 53.444760)',
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                    signed: true,
+                  ),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[-0-9.,]')),
+                  ],
+                  onChanged: (_) {
+                    if (_mode == _AddMode.currentGps) {
+                      setState(() => _mode = _AddMode.manual);
+                    }
+                  },
+                ),
+                const SizedBox(height: 12),
+                _StyledTextField(
+                  palette: widget.palette,
+                  controller: _lngController,
+                  label: 'Długość (np. 14.532817)',
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                    signed: true,
+                  ),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[-0-9.,]')),
+                  ],
+                  onChanged: (_) {
+                    if (_mode == _AddMode.currentGps) {
+                      setState(() => _mode = _AddMode.manual);
+                    }
+                  },
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: _copyCoordinates,
+                  icon: Icon(Icons.copy, color: widget.palette.accent),
+                  label: Text(
+                    'Kopiuj współrzędne',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: widget.palette.accent,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: widget.palette.accent),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_errorMessage != null) ...[
+            const SizedBox(height: 16),
+            Text(
+              _errorMessage!,
+              style: TextStyle(fontSize: 18, color: Colors.red.shade400),
+            ),
+          ],
           const SizedBox(height: 24),
           SizedBox(
             height: 56,
@@ -1137,92 +1268,6 @@ class _EditDestinationDialogState extends State<EditDestinationDialog> {
   }
 }
 
-class _DestinationForm extends StatelessWidget {
-  const _DestinationForm({
-    required this.palette,
-    required this.nameController,
-    required this.latController,
-    required this.lngController,
-    required this.mode,
-    required this.errorMessage,
-    required this.onModeChanged,
-  });
-
-  final AppPalette palette;
-  final TextEditingController nameController;
-  final TextEditingController latController;
-  final TextEditingController lngController;
-  final _AddMode mode;
-  final String? errorMessage;
-  final ValueChanged<_AddMode> onModeChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _StyledTextField(
-          palette: palette,
-          controller: nameController,
-          label: 'Nazwa miejsca',
-        ),
-        const SizedBox(height: 20),
-        _ModeButton(
-          palette: palette,
-          label: 'Zapisz tutaj, gdzie stoję',
-          icon: Icons.my_location,
-          selected: mode == _AddMode.currentGps,
-          onTap: () => onModeChanged(_AddMode.currentGps),
-        ),
-        const SizedBox(height: 12),
-        _ModeButton(
-          palette: palette,
-          label: 'Wpisz współrzędne ręcznie',
-          icon: Icons.edit_location_alt,
-          selected: mode == _AddMode.manual,
-          onTap: () => onModeChanged(_AddMode.manual),
-        ),
-        if (mode == _AddMode.manual) ...[
-          const SizedBox(height: 16),
-          _StyledTextField(
-            palette: palette,
-            controller: latController,
-            label: 'Szerokość (np. 53.444760)',
-            keyboardType: const TextInputType.numberWithOptions(
-              decimal: true,
-              signed: true,
-            ),
-            inputFormatters: [
-              FilteringTextInputFormatter.allow(RegExp(r'[-0-9.,]')),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _StyledTextField(
-            palette: palette,
-            controller: lngController,
-            label: 'Długość (np. 14.532817)',
-            keyboardType: const TextInputType.numberWithOptions(
-              decimal: true,
-              signed: true,
-            ),
-            inputFormatters: [
-              FilteringTextInputFormatter.allow(RegExp(r'[-0-9.,]')),
-            ],
-          ),
-        ],
-        if (errorMessage != null) ...[
-          const SizedBox(height: 16),
-          Text(
-            errorMessage!,
-            style: TextStyle(fontSize: 18, color: Colors.red.shade400),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
 class _StyledTextField extends StatelessWidget {
   const _StyledTextField({
     required this.palette,
@@ -1230,6 +1275,7 @@ class _StyledTextField extends StatelessWidget {
     required this.label,
     this.keyboardType,
     this.inputFormatters,
+    this.onChanged,
   });
 
   final AppPalette palette;
@@ -1237,6 +1283,7 @@ class _StyledTextField extends StatelessWidget {
   final String label;
   final TextInputType? keyboardType;
   final List<TextInputFormatter>? inputFormatters;
+  final ValueChanged<String>? onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1244,6 +1291,7 @@ class _StyledTextField extends StatelessWidget {
       controller: controller,
       keyboardType: keyboardType,
       inputFormatters: inputFormatters,
+      onChanged: onChanged,
       style: TextStyle(fontSize: 20, color: palette.textPrimary),
       decoration: InputDecoration(
         labelText: label,
@@ -1334,16 +1382,37 @@ class _CompassScreenState extends State<CompassScreen> {
   double? _deviceHeading;
   String? _errorMessage;
   bool _permissionGranted = false;
+  bool _gpsSearchTimeout = false;
 
   StreamSubscription<Position>? _positionSubscription;
   StreamSubscription<CompassEvent>? _compassSubscription;
+  Timer? _gpsSearchTimer;
 
   AppPalette get _palette => widget.settings.palette;
+
+  bool get _isSearchMode =>
+      _errorMessage != null ||
+      !_permissionGranted ||
+      _currentPosition == null ||
+      _deviceHeading == null;
 
   @override
   void initState() {
     super.initState();
     _initializeSensors();
+  }
+
+  void _startGpsSearchTimer() {
+    _gpsSearchTimer?.cancel();
+    _gpsSearchTimer = Timer(const Duration(minutes: 1), () {
+      if (!mounted || _currentPosition != null) return;
+      setState(() => _gpsSearchTimeout = true);
+    });
+  }
+
+  void _cancelGpsSearchTimer() {
+    _gpsSearchTimer?.cancel();
+    _gpsSearchTimer = null;
   }
 
   Future<void> _initializeSensors() async {
@@ -1382,6 +1451,7 @@ class _CompassScreenState extends State<CompassScreen> {
       _errorMessage = null;
     });
 
+    _startGpsSearchTimer();
     _startGpsUpdates();
     _startCompassUpdates();
   }
@@ -1396,7 +1466,11 @@ class _CompassScreenState extends State<CompassScreen> {
     ).listen(
       (position) {
         if (!mounted) return;
-        setState(() => _currentPosition = position);
+        setState(() {
+          _currentPosition = position;
+          _gpsSearchTimeout = false;
+        });
+        _cancelGpsSearchTimer();
       },
       onError: (_) {
         if (!mounted) return;
@@ -1459,9 +1533,32 @@ class _CompassScreenState extends State<CompassScreen> {
 
   @override
   void dispose() {
+    _cancelGpsSearchTimer();
     _positionSubscription?.cancel();
     _compassSubscription?.cancel();
     super.dispose();
+  }
+
+  Widget _buildBackButton() {
+    return SizedBox(
+      height: 56,
+      child: ElevatedButton.icon(
+        onPressed: () => Navigator.pop(context),
+        icon: const Icon(Icons.arrow_back, size: 28),
+        label: const Text(
+          'Powrót do listy',
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: _palette.buttonBackground,
+          foregroundColor: _palette.buttonForeground,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -1473,6 +1570,7 @@ class _CompassScreenState extends State<CompassScreen> {
         final isAtDestination =
             distance != null && distance <= arrivalRadiusMeters;
         final rotation = _arrowRotationDegrees();
+        final isSearchMode = _isSearchMode;
 
         return Scaffold(
           backgroundColor: _palette.background,
@@ -1482,26 +1580,10 @@ class _CompassScreenState extends State<CompassScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  SizedBox(
-                    height: 56,
-                    child: ElevatedButton.icon(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.arrow_back, size: 28),
-                      label: const Text(
-                        'Powrót do listy',
-                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _palette.buttonBackground,
-                        foregroundColor: _palette.buttonForeground,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
+                  if (!isSearchMode) ...[
+                    _buildBackButton(),
+                    const SizedBox(height: 8),
+                  ],
                   Text(
                     widget.destination.name,
                     textAlign: TextAlign.center,
@@ -1514,6 +1596,10 @@ class _CompassScreenState extends State<CompassScreen> {
                       rotation: rotation,
                     ),
                   ),
+                  if (isSearchMode) ...[
+                    const SizedBox(height: 8),
+                    _buildBackButton(),
+                  ],
                 ],
               ),
             ),
@@ -1537,10 +1623,13 @@ class _CompassScreenState extends State<CompassScreen> {
     }
 
     if (!_permissionGranted || _currentPosition == null) {
+      final text = _gpsSearchTimeout
+          ? 'zacznij iść, aby pomóc w nawiązaniu połączenia GPS'
+          : 'Szukam Twojej pozycji GPS...\nTrzymaj telefon w ręku i poczekaj chwilę.';
       return _buildMessageScreen(
         icon: Icons.gps_fixed,
         iconColor: _palette.accent,
-        text: 'Szukam Twojej pozycji GPS...\nTrzymaj telefon w ręku i poczekaj chwilę.',
+        text: text,
       );
     }
 

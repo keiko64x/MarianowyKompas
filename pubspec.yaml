@@ -1,7 +1,7 @@
 name: szadejkompas
 description: Szadejkompas — offline nawigacja GPS dla E. Szadejko.
 publish_to: 'none'
-version: 2.1.0+3
+version: 2.2.0+4
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -22,9 +22,9 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: false
-  image_path: ikona_szadejkompas.png
+  image_path: ikona-szadejkompas2.png
   adaptive_icon_background: "#12141C"
-  adaptive_icon_foreground: ikona_szadejkompas.png
+  adaptive_icon_foreground: ikona-szadejkompas2.png
 
 flutter:
   uses-material-design: true
