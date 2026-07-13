@@ -15,7 +15,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 const double arrivalRadiusMeters = 5.0;
 const String _destinationsKey = 'custom_destinations';
 const String _themeKey = 'app_theme';
-const String _logoAsset = 'ikona-szadejkompas2.png';
+const String _logoAsset = 'ikona-szadejkompas2.1.png';
+const Duration _kMenuAnimDuration = Duration(milliseconds: 400);
+const double _kMenuButtonFullHeight = 60;
+const double _kMenuIconArea = 26;
 
 const Destination initialDefaultDestination = Destination(
   id: 'default_hasior_birds',
@@ -532,6 +535,7 @@ class _MainScreenState extends State<MainScreen> {
       listenable: widget.settings,
       builder: (context, _) {
         return Scaffold(
+          resizeToAvoidBottomInset: false,
           backgroundColor: _palette.background,
           body: SafeArea(
             child: Column(
@@ -560,13 +564,12 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Widget _buildCenterContainer() {
-    final bool whiteBg = _mode == _ScreenMode.add;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Container(
         width: double.infinity,
         decoration: BoxDecoration(
-          color: whiteBg ? Colors.white : _palette.containerBackground,
+          color: _palette.containerBackground,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: _palette.surfaceBorder),
         ),
@@ -637,6 +640,14 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Widget _buildBottomArea() {
+    final keyboardBottom = MediaQuery.viewInsetsOf(context).bottom;
+    if (keyboardBottom > 0) {
+      return Padding(
+        padding: EdgeInsets.fromLTRB(16, 8, 16, keyboardBottom + 4),
+        child: _KeyboardDismissButton(palette: _palette),
+      );
+    }
+
     if (_mode == _ScreenMode.compass) {
       return _buildCompassFooter();
     }
@@ -657,26 +668,21 @@ class _MainScreenState extends State<MainScreen> {
 
   Widget _buildMenuColumn(_MenuButton button, String label, IconData icon) {
     final isActive = _activeMenuButton == button;
-    final lift = isActive ? (button == _MenuButton.add ? -12.0 : -6.0) : 0.0;
 
     return Expanded(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            transform: Matrix4.translationValues(0, lift, 0),
-            child: _MenuButtonWidget(
-              palette: _palette,
-              label: label,
-              icon: icon,
-              isActive: isActive,
-              onPressed: () => _toggleMenu(button),
-            ),
+          _MenuButtonWidget(
+            palette: _palette,
+            label: label,
+            icon: icon,
+            isActive: isActive,
+            onPressed: () => _toggleMenu(button),
           ),
           if (isActive) ...[
             const SizedBox(height: 6),
-            _CofButton(palette: _palette, onPressed: _goToDefault),
+            _CofButton(palette: _palette, onPressed: _goToDefault, compact: true),
           ],
         ],
       ),
@@ -696,7 +702,7 @@ class _MainScreenState extends State<MainScreen> {
           ? 'zacznij iść, aby pomóc w nawiązaniu połączenia GPS'
           : 'kalkulowanie sygnałów z satelitów';
     } else if (distance != null && distance <= arrivalRadiusMeters) {
-      distanceText = 'Jesteś przy celu — rozejrzyj się.';
+      distanceText = 'Osiągnięto destynację. Rozejrzyj się.';
     } else {
       distanceText = 'Dystans do destynacji: ${distance?.round() ?? '...'} metrów';
     }
@@ -715,10 +721,21 @@ class _MainScreenState extends State<MainScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          _CofButton(
-            palette: _palette,
-            icon: Icons.arrow_back,
-            onPressed: _goToDefault,
+          Row(
+            children: [
+              Expanded(
+                child: _CofButton(
+                  palette: _palette,
+                  icon: Icons.arrow_back,
+                  onPressed: _goToDefault,
+                  compact: true,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Expanded(child: SizedBox()),
+              const SizedBox(width: 8),
+              const Expanded(child: SizedBox()),
+            ],
           ),
         ],
       ),
@@ -747,9 +764,13 @@ class _MenuButtonWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 60,
-      width: double.infinity,
+    final activeHeight = _kMenuButtonFullHeight - _kMenuIconArea;
+
+    return AnimatedContainer(
+      duration: _kMenuAnimDuration,
+      curve: Curves.easeInOut,
+      height: isActive ? activeHeight : _kMenuButtonFullHeight,
+      transform: Matrix4.translationValues(0, isActive ? -4 : 0, 0),
       child: ElevatedButton(
         onPressed: onPressed,
         style: ElevatedButton.styleFrom(
@@ -757,17 +778,49 @@ class _MenuButtonWidget extends StatelessWidget {
           foregroundColor: isActive
               ? (palette.isDark ? Colors.black : Colors.white)
               : palette.buttonForeground,
-          elevation: isActive ? 4 : 0,
+          elevation: isActive ? 3 : 0,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           padding: const EdgeInsets.symmetric(horizontal: 4),
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 24),
-            const SizedBox(height: 2),
-            Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-          ],
+        child: isActive
+            ? Text(
+                label,
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+              )
+            : Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 24),
+                  const SizedBox(height: 2),
+                  Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+class _KeyboardDismissButton extends StatelessWidget {
+  const _KeyboardDismissButton({required this.palette});
+
+  final AppPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 48,
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: () => FocusManager.instance.primaryFocus?.unfocus(),
+        icon: Icon(Icons.keyboard_arrow_down, color: palette.textPrimary, size: 28),
+        label: Text(
+          'Zamknij klawiaturę',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: palette.textPrimary),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: palette.buttonBackground,
+          elevation: 0,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
     );
@@ -779,25 +832,27 @@ class _CofButton extends StatelessWidget {
     required this.palette,
     required this.onPressed,
     this.icon = Icons.arrow_back,
+    this.compact = false,
   });
 
   final AppPalette palette;
   final VoidCallback onPressed;
   final IconData icon;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 44,
+      height: compact ? 36 : 44,
       width: double.infinity,
       child: ElevatedButton.icon(
         onPressed: onPressed,
-        icon: Icon(icon, size: 22, color: palette.cofForeground),
+        icon: Icon(icon, size: compact ? 18 : 22, color: palette.cofForeground),
         label: Text(
-          'COF',
+          'cof',
           style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
+            fontSize: compact ? 13 : 15,
+            fontWeight: FontWeight.w600,
             color: palette.cofForeground,
           ),
         ),
@@ -890,7 +945,7 @@ class _DestinationsListView extends StatelessWidget {
                   child: Padding(
                     padding: const EdgeInsets.all(24),
                     child: Text(
-                      'Brak zapisanych miejsc.\nNaciśnij „Dodaj”.',
+                      'Brak zapisanych miejsc.\nNaciśnij „dodaj destynację".',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.headlineMedium,
                     ),
@@ -1058,22 +1113,22 @@ class _AddFormState extends State<_AddForm> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Dodaj miejsce',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87)),
+          Text('Dodaj miejsce', style: Theme.of(context).textTheme.headlineMedium),
           const SizedBox(height: 16),
-          _TextField(controller: _nameController, label: 'Nazwa miejsca', darkText: true),
+          _TextField(controller: _nameController, label: 'Nazwa miejsca', palette: widget.palette),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: _fillFromGps,
-            icon: const Icon(Icons.my_location),
-            label: const Text('Zapisz tutaj, gdzie stoję'),
+            icon: Icon(Icons.my_location, color: widget.palette.accent),
+            label: Text('Zapisz tutaj, gdzie stoję', style: TextStyle(color: widget.palette.accent)),
+            style: OutlinedButton.styleFrom(side: BorderSide(color: widget.palette.accent)),
           ),
           const SizedBox(height: 16),
           _CoordsBox(
             latController: _latController,
             lngController: _lngController,
             onCopy: _copyCoords,
-            darkText: true,
+            palette: widget.palette,
           ),
           if (_error != null) ...[
             const SizedBox(height: 12),
@@ -1084,7 +1139,7 @@ class _AddFormState extends State<_AddForm> {
             onPressed: _save,
             style: ElevatedButton.styleFrom(
               backgroundColor: widget.palette.accent,
-              foregroundColor: Colors.white,
+            foregroundColor: widget.palette.isDark ? Colors.black : Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
             ),
             child: const Text('Zapisz', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
@@ -1462,7 +1517,7 @@ class _CompassView extends StatelessWidget {
             Icon(Icons.check_circle, size: 160, color: palette.success),
             const SizedBox(height: 24),
             Text(
-              'Jesteś przy celu — rozejrzyj się.',
+              'Osiągnięto destynację. Rozejrzyj się.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.headlineMedium,
             ),
