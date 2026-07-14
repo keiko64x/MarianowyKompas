@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 const double arrivalRadiusMeters = 5.0;
 const String _destinationsKey = 'custom_destinations';
 const String _themeKey = 'app_theme';
+const String _skipWelcomeKey = 'skip_welcome';
 const String _logoAsset = 'ikona-szadejkompas2.1.png';
 const Duration _kMenuAnimDuration = Duration(milliseconds: 400);
 const double _kSquareButtonSize = 72;
@@ -123,7 +124,147 @@ class SzadejkompasApp extends StatelessWidget {
           title: 'Szadejkompas',
           debugShowCheckedModeBanner: false,
           theme: settings.palette.toThemeData(),
-          home: MainScreen(settings: settings),
+          home: _AppRoot(settings: settings),
+        );
+      },
+    );
+  }
+}
+
+class _AppRoot extends StatefulWidget {
+  const _AppRoot({required this.settings});
+
+  final AppSettings settings;
+
+  @override
+  State<_AppRoot> createState() => _AppRootState();
+}
+
+class _AppRootState extends State<_AppRoot> {
+  bool? _showWelcome;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadWelcomePref();
+  }
+
+  Future<void> _loadWelcomePref() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() => _showWelcome = !(prefs.getBool(_skipWelcomeKey) ?? false));
+  }
+
+  Future<void> _completeWelcome(bool dontShowAgain) async {
+    if (dontShowAgain) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_skipWelcomeKey, true);
+    }
+    if (!mounted) return;
+    setState(() => _showWelcome = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_showWelcome == null) {
+      return Scaffold(
+        backgroundColor: widget.settings.palette.background,
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_showWelcome!) {
+      return _WelcomeScreen(
+        settings: widget.settings,
+        onContinue: _completeWelcome,
+      );
+    }
+    return MainScreen(settings: widget.settings);
+  }
+}
+
+class _WelcomeScreen extends StatefulWidget {
+  const _WelcomeScreen({required this.settings, required this.onContinue});
+
+  final AppSettings settings;
+  final ValueChanged<bool> onContinue;
+
+  @override
+  State<_WelcomeScreen> createState() => _WelcomeScreenState();
+}
+
+class _WelcomeScreenState extends State<_WelcomeScreen> {
+  bool _dontShowAgain = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = widget.settings.palette;
+    return ListenableBuilder(
+      listenable: widget.settings,
+      builder: (context, _) {
+        return Scaffold(
+          backgroundColor: palette.background,
+          body: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  const Spacer(flex: 2),
+                  Image.asset(_logoAsset, height: 120, fit: BoxFit.contain),
+                  const SizedBox(height: 32),
+                  Text(
+                    'Szadejkompas działa bez użycia internetu, nie wyszukuje się '
+                    'w nim miejsc jak w Google Maps, wskazuje on kierunek do '
+                    'konkretnych współrzędnych geograficznych, oraz dystans.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                  const Spacer(flex: 3),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: SizedBox(
+                          height: _kSquareButtonSize,
+                          child: _SquareMenuButton(
+                            palette: palette,
+                            label: 'Rozumiem',
+                            icon: Icons.check,
+                            onPressed: () => widget.onContinue(_dontShowAgain),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: InkWell(
+                          onTap: () => setState(() => _dontShowAgain = !_dontShowAgain),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Row(
+                            children: [
+                              Checkbox(
+                                value: _dontShowAgain,
+                                onChanged: (v) => setState(() => _dontShowAgain = v ?? false),
+                                activeColor: palette.accent,
+                              ),
+                              Expanded(
+                                child: Text(
+                                  'Nie pokazuj ponownie',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: palette.textPrimary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+            ),
+          ),
         );
       },
     );
@@ -552,7 +693,6 @@ class _MainScreenState extends State<MainScreen> {
           body: SafeArea(
             child: Column(
               children: [
-                _buildLogoHeader(),
                 Expanded(child: _buildCenterContainer()),
                 _buildBottomArea(),
                 _GpsBar(
@@ -565,13 +705,6 @@ class _MainScreenState extends State<MainScreen> {
           ),
         );
       },
-    );
-  }
-
-  Widget _buildLogoHeader() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
-      child: Image.asset(_logoAsset, height: 72, fit: BoxFit.contain),
     );
   }
 
@@ -658,7 +791,16 @@ class _MainScreenState extends State<MainScreen> {
         padding: EdgeInsets.fromLTRB(16, 4, 16, keyboardBottom + 4),
         child: Align(
           alignment: Alignment.centerRight,
-          child: _KeyboardDismissButton(palette: _palette),
+          child: SizedBox(
+            width: _kSquareButtonSize,
+            height: _kSquareButtonSize * 2,
+            child: _SquareMenuButton(
+              palette: _palette,
+              icon: Icons.keyboard_arrow_down,
+              stackedWords: const ['schowaj', 'klawiaturę'],
+              onPressed: () => FocusManager.instance.primaryFocus?.unfocus(),
+            ),
+          ),
         ),
       );
     }
@@ -717,7 +859,7 @@ class _MainScreenState extends State<MainScreen> {
             flex: 3,
             child: arrived
                 ? Text(
-                    'Osiągnięto destynację. Rozejrzyj się.',
+                    'Osiągnięto cel, rozejrzyj się.',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -780,7 +922,9 @@ class _MainScreenState extends State<MainScreen> {
                 height: _kSquareButtonSize,
                 child: _SquareMenuButton(
                   palette: _palette,
+                  label: 'Cofnij',
                   icon: Icons.keyboard_arrow_down,
+                  labelAboveIcon: true,
                   onPressed: _goToDefault,
                 ),
               ),
@@ -796,41 +940,14 @@ class _MainScreenState extends State<MainScreen> {
 // Widgety wspólne
 // ---------------------------------------------------------------------------
 
-class _KeyboardDismissButton extends StatelessWidget {
-  const _KeyboardDismissButton({required this.palette});
-
-  final AppPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    return TextButton.icon(
-      onPressed: () => FocusManager.instance.primaryFocus?.unfocus(),
-      icon: Icon(Icons.keyboard_arrow_down, size: 20, color: palette.accent),
-      label: Text(
-        'schowaj klawiaturę',
-        style: TextStyle(
-          fontSize: 15,
-          fontWeight: FontWeight.w600,
-          color: palette.textPrimary,
-        ),
-      ),
-      style: TextButton.styleFrom(
-        backgroundColor: palette.buttonBackground,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-        minimumSize: Size.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      ),
-    );
-  }
-}
-
 class _SquareMenuButton extends StatelessWidget {
   const _SquareMenuButton({
     required this.palette,
     required this.icon,
     required this.onPressed,
     this.label,
+    this.stackedWords,
+    this.labelAboveIcon = false,
     this.isActive = false,
   });
 
@@ -838,6 +955,8 @@ class _SquareMenuButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onPressed;
   final String? label;
+  final List<String>? stackedWords;
+  final bool labelAboveIcon;
   final bool isActive;
 
   @override
@@ -846,6 +965,57 @@ class _SquareMenuButton extends StatelessWidget {
         ? (palette.isDark ? Colors.black : Colors.white)
         : palette.buttonForeground;
     final background = isActive ? palette.accent : palette.buttonBackground;
+
+    Widget content;
+    if (stackedWords != null && stackedWords!.isNotEmpty) {
+      content = Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          for (final word in stackedWords!)
+            Text(
+              word,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: foreground,
+              ),
+            ),
+          const SizedBox(height: 4),
+          Icon(icon, size: 24, color: foreground),
+        ],
+      );
+    } else if (label != null) {
+      content = Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          if (labelAboveIcon) ...[
+            Text(
+              label!,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: foreground,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Icon(icon, size: 28, color: foreground),
+          ] else ...[
+            Icon(icon, size: 28, color: foreground),
+            const SizedBox(height: 4),
+            Text(
+              label!,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: foreground,
+              ),
+            ),
+          ],
+        ],
+      );
+    } else {
+      content = Center(child: Icon(icon, size: 32, color: foreground));
+    }
 
     return AnimatedContainer(
       duration: _kMenuAnimDuration,
@@ -859,23 +1029,7 @@ class _SquareMenuButton extends StatelessWidget {
         child: InkWell(
           onTap: onPressed,
           borderRadius: BorderRadius.circular(12),
-          child: label != null
-              ? Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(icon, size: 28, color: foreground),
-                    const SizedBox(height: 4),
-                    Text(
-                      label!,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: foreground,
-                      ),
-                    ),
-                  ],
-                )
-              : Center(child: Icon(icon, size: 32, color: foreground)),
+          child: content,
         ),
       ),
     );
@@ -1545,7 +1699,7 @@ class _CompassView extends StatelessWidget {
             Icon(Icons.check_circle, size: 160, color: palette.success),
             const SizedBox(height: 24),
             Text(
-              'Osiągnięto destynację. Rozejrzyj się.',
+              'Osiągnięto cel, rozejrzyj się.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.headlineMedium,
             ),
