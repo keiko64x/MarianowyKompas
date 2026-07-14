@@ -655,20 +655,10 @@ class _MainScreenState extends State<MainScreen> {
     final keyboardBottom = MediaQuery.viewInsetsOf(context).bottom;
     if (keyboardBottom > 0) {
       return Padding(
-        padding: EdgeInsets.fromLTRB(16, 8, 16, keyboardBottom + 4),
-        child: Row(
-          children: [
-            const Spacer(),
-            SizedBox(
-              width: _kSquareButtonSize,
-              height: _kSquareButtonSize,
-              child: _SquareMenuButton(
-                palette: _palette,
-                icon: Icons.keyboard_arrow_down,
-                onPressed: () => FocusManager.instance.primaryFocus?.unfocus(),
-              ),
-            ),
-          ],
+        padding: EdgeInsets.fromLTRB(16, 4, 16, keyboardBottom + 4),
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: _KeyboardDismissButton(palette: _palette),
         ),
       );
     }
@@ -805,6 +795,35 @@ class _MainScreenState extends State<MainScreen> {
 // ---------------------------------------------------------------------------
 // Widgety wspólne
 // ---------------------------------------------------------------------------
+
+class _KeyboardDismissButton extends StatelessWidget {
+  const _KeyboardDismissButton({required this.palette});
+
+  final AppPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      onPressed: () => FocusManager.instance.primaryFocus?.unfocus(),
+      icon: Icon(Icons.keyboard_arrow_down, size: 20, color: palette.accent),
+      label: Text(
+        'schowaj klawiaturę',
+        style: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: palette.textPrimary,
+        ),
+      ),
+      style: TextButton.styleFrom(
+        backgroundColor: palette.buttonBackground,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+}
 
 class _SquareMenuButton extends StatelessWidget {
   const _SquareMenuButton({
@@ -1377,39 +1396,51 @@ class _InfoContent extends StatelessWidget {
       listenable: settings,
       builder: (context, _) {
         final palette = settings.palette;
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'Szadejkompas działa offline przy użyciu sygnału GPS, '
-                'więc jest dokładniejszy gdy się poruszasz.',
-                style: Theme.of(context).textTheme.bodyLarge,
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Szadejkompas nasłuchuje sygnałów wysyłanych nieustannie przez '
+                      'satelity i kalkuluje swoje położenie na podstawie ich położenia '
+                      'oraz różnicy w czasie jaka ma miejsce pomiędzy nadaniem sygnału '
+                      'oraz jego odbiorem. Taką metodę określania współrzędnych w '
+                      'geometrii nazywamy trilateracją.',
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                    const SizedBox(height: 32),
+                    Text('Motyw', style: Theme.of(context).textTheme.titleLarge),
+                    const SizedBox(height: 12),
+                    _ThemeOption(
+                      palette: palette,
+                      label: 'Ciemny',
+                      selected: palette.isDark,
+                      onTap: () => settings.setTheme(AppThemeMode.dark),
+                    ),
+                    const SizedBox(height: 8),
+                    _ThemeOption(
+                      palette: palette,
+                      label: 'Jasny',
+                      selected: !palette.isDark,
+                      onTap: () => settings.setTheme(AppThemeMode.light),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 32),
-              Text('Motyw', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 12),
-              _ThemeOption(
-                palette: palette,
-                label: 'Ciemny',
-                selected: palette.isDark,
-                onTap: () => settings.setTheme(AppThemeMode.dark),
-              ),
-              const SizedBox(height: 8),
-              _ThemeOption(
-                palette: palette,
-                label: 'Jasny',
-                selected: !palette.isDark,
-                onTap: () => settings.setTheme(AppThemeMode.light),
-              ),
-              const SizedBox(height: 32),
-              Text(
-                'Author:\nkeiko64x@gmail.com',
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+              child: Text(
+                'autor: kamilszadejko@gmail.com',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
-            ],
-          ),
+            ),
+          ],
         );
       },
     );
