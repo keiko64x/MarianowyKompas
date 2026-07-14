@@ -17,8 +17,18 @@ const String _destinationsKey = 'custom_destinations';
 const String _themeKey = 'app_theme';
 const String _logoAsset = 'ikona-szadejkompas2.1.png';
 const Duration _kMenuAnimDuration = Duration(milliseconds: 400);
-const double _kMenuButtonFullHeight = 60;
-const double _kMenuIconArea = 26;
+const double _kSquareButtonSize = 72;
+
+String _formatDistanceValue(double? meters) {
+  if (meters == null) return '...';
+  if (meters <= 1000) return '${meters.round()}';
+  return (meters / 1000).toStringAsFixed(2).replaceAll('.', ',');
+}
+
+String _formatDistanceUnit(double? meters) {
+  if (meters == null) return '';
+  return meters <= 1000 ? 'metrów' : 'km';
+}
 
 const Destination initialDefaultDestination = Destination(
   id: 'default_hasior_birds',
@@ -50,8 +60,6 @@ class AppPalette {
   Color get arrow => isDark ? const Color(0xFF7EC8FF) : const Color(0xFF0D47A1);
   Color get buttonBackground => isDark ? const Color(0xFF2A3145) : const Color(0xFFE8E8E8);
   Color get buttonForeground => isDark ? Colors.white : Colors.black;
-  Color get cofBackground => const Color(0xFFFFE8E8);
-  Color get cofForeground => const Color(0xFFB71C1C);
   Color get gpsBar => isDark ? const Color(0xFF1A1F2E) : const Color(0xFFE0E0E0);
   Color get success => Colors.green.shade500;
 
@@ -229,7 +237,7 @@ class DestinationStorage {
 
 enum _ScreenMode { destinations, add, editList, editItem, info, compass }
 
-enum _MenuButton { add, edit, info }
+enum _MenuButton { list, add, edit, info }
 
 // ---------------------------------------------------------------------------
 // Główny ekran
@@ -299,6 +307,8 @@ class _MainScreenState extends State<MainScreen> {
 
   _MenuButton? get _activeMenuButton {
     switch (_mode) {
+      case _ScreenMode.destinations:
+        return _MenuButton.list;
       case _ScreenMode.add:
         return _MenuButton.add;
       case _ScreenMode.editList:
@@ -465,6 +475,8 @@ class _MainScreenState extends State<MainScreen> {
     setState(() {
       _editingDestination = null;
       switch (button) {
+        case _MenuButton.list:
+          _mode = _ScreenMode.destinations;
         case _MenuButton.add:
           _mode = _ScreenMode.add;
         case _MenuButton.edit:
@@ -644,7 +656,20 @@ class _MainScreenState extends State<MainScreen> {
     if (keyboardBottom > 0) {
       return Padding(
         padding: EdgeInsets.fromLTRB(16, 8, 16, keyboardBottom + 4),
-        child: _KeyboardDismissButton(palette: _palette),
+        child: Row(
+          children: [
+            const Spacer(),
+            SizedBox(
+              width: _kSquareButtonSize,
+              height: _kSquareButtonSize,
+              child: _SquareMenuButton(
+                palette: _palette,
+                icon: Icons.keyboard_arrow_down,
+                onPressed: () => FocusManager.instance.primaryFocus?.unfocus(),
+              ),
+            ),
+          ],
+        ),
       );
     }
 
@@ -654,37 +679,31 @@ class _MainScreenState extends State<MainScreen> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          _buildMenuColumn(_MenuButton.add, 'Dodaj', Icons.add),
+          _buildMenuButton(_MenuButton.list, 'Lista', Icons.list),
           const SizedBox(width: 8),
-          _buildMenuColumn(_MenuButton.edit, 'Edytuj', Icons.edit),
+          _buildMenuButton(_MenuButton.add, 'Dodaj', Icons.add),
           const SizedBox(width: 8),
-          _buildMenuColumn(_MenuButton.info, 'Info', Icons.info_outline),
+          _buildMenuButton(_MenuButton.edit, 'Edytuj', Icons.edit),
+          const SizedBox(width: 8),
+          _buildMenuButton(_MenuButton.info, 'Info', Icons.info_outline),
         ],
       ),
     );
   }
 
-  Widget _buildMenuColumn(_MenuButton button, String label, IconData icon) {
+  Widget _buildMenuButton(_MenuButton button, String label, IconData icon) {
     final isActive = _activeMenuButton == button;
-
     return Expanded(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _MenuButtonWidget(
-            palette: _palette,
-            label: label,
-            icon: icon,
-            isActive: isActive,
-            onPressed: () => _toggleMenu(button),
-          ),
-          if (isActive) ...[
-            const SizedBox(height: 6),
-            _CofButton(palette: _palette, onPressed: _goToDefault, compact: true),
-          ],
-        ],
+      child: SizedBox(
+        height: _kSquareButtonSize,
+        child: _SquareMenuButton(
+          palette: _palette,
+          label: label,
+          icon: icon,
+          isActive: isActive,
+          onPressed: () => _toggleMenu(button),
+        ),
       ),
     );
   }
@@ -696,46 +715,86 @@ class _MainScreenState extends State<MainScreen> {
         _deviceHeading != null &&
         _compassError == null;
 
-    String distanceText;
-    if (!isReady) {
-      distanceText = _gpsSearchTimeout
-          ? 'zacznij iść, aby pomóc w nawiązaniu połączenia GPS'
-          : 'kalkulowanie sygnałów z satelitów';
-    } else if (distance != null && distance <= arrivalRadiusMeters) {
-      distanceText = 'Osiągnięto destynację. Rozejrzyj się.';
-    } else {
-      distanceText = 'Dystans do destynacji: ${distance?.round() ?? '...'} metrów';
-    }
+    final bool arrived = isReady && distance != null && distance <= arrivalRadiusMeters;
+    final bool showDistance = isReady && !arrived;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      child: Column(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text(
-            distanceText,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: _palette.textPrimary,
-            ),
+          Expanded(
+            flex: 3,
+            child: arrived
+                ? Text(
+                    'Osiągnięto destynację. Rozejrzyj się.',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: _palette.textPrimary,
+                    ),
+                  )
+                : showDistance
+                    ? Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Dystans',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: _palette.textSecondary,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              _formatDistanceValue(distance),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: _palette.textPrimary,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              _formatDistanceUnit(distance),
+                              textAlign: TextAlign.end,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: _palette.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    : Text(
+                        _gpsSearchTimeout
+                            ? 'zacznij iść, aby pomóc w nawiązaniu połączenia GPS'
+                            : 'kalkulowanie sygnałów z satelitów',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: _palette.textPrimary,
+                        ),
+                      ),
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: _CofButton(
+          Expanded(
+            flex: 1,
+            child: Center(
+              child: SizedBox(
+                width: _kSquareButtonSize,
+                height: _kSquareButtonSize,
+                child: _SquareMenuButton(
                   palette: _palette,
-                  icon: Icons.arrow_back,
+                  icon: Icons.keyboard_arrow_down,
                   onPressed: _goToDefault,
-                  compact: true,
                 ),
               ),
-              const SizedBox(width: 8),
-              const Expanded(child: SizedBox()),
-              const SizedBox(width: 8),
-              const Expanded(child: SizedBox()),
-            ],
+            ),
           ),
         ],
       ),
@@ -747,119 +806,57 @@ class _MainScreenState extends State<MainScreen> {
 // Widgety wspólne
 // ---------------------------------------------------------------------------
 
-class _MenuButtonWidget extends StatelessWidget {
-  const _MenuButtonWidget({
+class _SquareMenuButton extends StatelessWidget {
+  const _SquareMenuButton({
     required this.palette,
-    required this.label,
     required this.icon,
-    required this.isActive,
     required this.onPressed,
+    this.label,
+    this.isActive = false,
   });
 
   final AppPalette palette;
-  final String label;
   final IconData icon;
-  final bool isActive;
   final VoidCallback onPressed;
+  final String? label;
+  final bool isActive;
 
   @override
   Widget build(BuildContext context) {
-    final activeHeight = _kMenuButtonFullHeight - _kMenuIconArea;
+    final foreground = isActive
+        ? (palette.isDark ? Colors.black : Colors.white)
+        : palette.buttonForeground;
+    final background = isActive ? palette.accent : palette.buttonBackground;
 
     return AnimatedContainer(
       duration: _kMenuAnimDuration,
       curve: Curves.easeInOut,
-      height: isActive ? activeHeight : _kMenuButtonFullHeight,
-      transform: Matrix4.translationValues(0, isActive ? -4 : 0, 0),
-      child: ElevatedButton(
-        onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isActive ? palette.accent : palette.buttonBackground,
-          foregroundColor: isActive
-              ? (palette.isDark ? Colors.black : Colors.white)
-              : palette.buttonForeground,
-          elevation: isActive ? 3 : 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-        ),
-        child: isActive
-            ? Text(
-                label,
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-              )
-            : Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(icon, size: 24),
-                  const SizedBox(height: 2),
-                  Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                ],
-              ),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(12),
       ),
-    );
-  }
-}
-
-class _KeyboardDismissButton extends StatelessWidget {
-  const _KeyboardDismissButton({required this.palette});
-
-  final AppPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 48,
-      width: double.infinity,
-      child: ElevatedButton.icon(
-        onPressed: () => FocusManager.instance.primaryFocus?.unfocus(),
-        icon: Icon(Icons.keyboard_arrow_down, color: palette.textPrimary, size: 28),
-        label: Text(
-          'Zamknij klawiaturę',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: palette.textPrimary),
-        ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: palette.buttonBackground,
-          elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      ),
-    );
-  }
-}
-
-class _CofButton extends StatelessWidget {
-  const _CofButton({
-    required this.palette,
-    required this.onPressed,
-    this.icon = Icons.arrow_back,
-    this.compact = false,
-  });
-
-  final AppPalette palette;
-  final VoidCallback onPressed;
-  final IconData icon;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: compact ? 36 : 44,
-      width: double.infinity,
-      child: ElevatedButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon, size: compact ? 18 : 22, color: palette.cofForeground),
-        label: Text(
-          'cof',
-          style: TextStyle(
-            fontSize: compact ? 13 : 15,
-            fontWeight: FontWeight.w600,
-            color: palette.cofForeground,
-          ),
-        ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: palette.cofBackground,
-          elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(12),
+          child: label != null
+              ? Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(icon, size: 28, color: foreground),
+                    const SizedBox(height: 4),
+                    Text(
+                      label!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: foreground,
+                      ),
+                    ),
+                  ],
+                )
+              : Center(child: Icon(icon, size: 32, color: foreground)),
         ),
       ),
     );
