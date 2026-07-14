@@ -18,6 +18,7 @@ const String _themeKey = 'app_theme';
 const String _skipWelcomeKey = 'skip_welcome';
 const String _logoAsset = 'ikona-szadejkompas2.1.png';
 const Duration _kMenuAnimDuration = Duration(milliseconds: 400);
+const double _kWelcomeLogoHeight = 132;
 const double _kSquareButtonSize = 72;
 
 String _formatDistanceValue(double? meters) {
@@ -209,7 +210,7 @@ class _WelcomeScreenState extends State<_WelcomeScreen> {
               child: Column(
                 children: [
                   const Spacer(flex: 2),
-                  Image.asset(_logoAsset, height: 120, fit: BoxFit.contain),
+                  Image.asset(_logoAsset, height: _kWelcomeLogoHeight, fit: BoxFit.contain),
                   const SizedBox(height: 32),
                   Text(
                     'Szadejkompas działa bez użycia internetu, nie wyszukuje się '
@@ -693,6 +694,7 @@ class _MainScreenState extends State<MainScreen> {
           body: SafeArea(
             child: Column(
               children: [
+                _buildLogoHeader(),
                 Expanded(child: _buildCenterContainer()),
                 _buildBottomArea(),
                 _GpsBar(
@@ -705,6 +707,13 @@ class _MainScreenState extends State<MainScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildLogoHeader() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+      child: Image.asset(_logoAsset, height: 72, fit: BoxFit.contain),
     );
   }
 
@@ -791,16 +800,7 @@ class _MainScreenState extends State<MainScreen> {
         padding: EdgeInsets.fromLTRB(16, 4, 16, keyboardBottom + 4),
         child: Align(
           alignment: Alignment.centerRight,
-          child: SizedBox(
-            width: _kSquareButtonSize,
-            height: _kSquareButtonSize * 2,
-            child: _SquareMenuButton(
-              palette: _palette,
-              icon: Icons.keyboard_arrow_down,
-              stackedWords: const ['schowaj', 'klawiaturę'],
-              onPressed: () => FocusManager.instance.primaryFocus?.unfocus(),
-            ),
-          ),
+          child: _KeyboardDismissButton(palette: _palette),
         ),
       );
     }
@@ -868,37 +868,32 @@ class _MainScreenState extends State<MainScreen> {
                   )
                 : showDistance
                     ? Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Expanded(
-                            child: Text(
-                              'Dystans',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: _palette.textSecondary,
-                              ),
+                          Text(
+                            'Dystans',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: _palette.textSecondary,
                             ),
                           ),
-                          Expanded(
-                            child: Text(
-                              _formatDistanceValue(distance),
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                                color: _palette.textPrimary,
-                              ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _formatDistanceValue(distance),
+                            style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                              color: _palette.textPrimary,
                             ),
                           ),
-                          Expanded(
-                            child: Text(
-                              _formatDistanceUnit(distance),
-                              textAlign: TextAlign.end,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: _palette.textSecondary,
-                              ),
+                          const SizedBox(width: 4),
+                          Text(
+                            _formatDistanceUnit(distance),
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: _palette.textSecondary,
                             ),
                           ),
                         ],
@@ -939,6 +934,59 @@ class _MainScreenState extends State<MainScreen> {
 // ---------------------------------------------------------------------------
 // Widgety wspólne
 // ---------------------------------------------------------------------------
+
+class _KeyboardDismissButton extends StatelessWidget {
+  const _KeyboardDismissButton({required this.palette});
+
+  final AppPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = palette.buttonForeground;
+    return Material(
+      color: palette.buttonBackground,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'schowaj',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      height: 1.1,
+                      color: fg,
+                    ),
+                  ),
+                  Text(
+                    'klawiaturę',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      height: 1.1,
+                      color: fg,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 10),
+              Icon(Icons.keyboard_arrow_down, size: 22, color: fg),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _SquareMenuButton extends StatelessWidget {
   const _SquareMenuButton({
