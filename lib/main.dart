@@ -33,10 +33,10 @@ String _formatDistanceUnit(double? meters) {
 }
 
 const Destination initialDefaultDestination = Destination(
-  id: 'default_hasior_birds',
-  name: 'Park Kasprowicza — Ogniste Ptaki Hasiora',
-  latitude: 53.444760,
-  longitude: 14.532817,
+  id: 'default_marian_szadejko',
+  name: 'Marian Szadejko',
+  latitude: 53.414212,
+  longitude: 14.513921,
 );
 
 // ---------------------------------------------------------------------------
@@ -712,8 +712,8 @@ class _MainScreenState extends State<MainScreen> {
 
   Widget _buildLogoHeader() {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
-      child: Image.asset(_logoAsset, height: 72, fit: BoxFit.contain),
+      padding: const EdgeInsets.symmetric(vertical: 11.4, horizontal: 22.8),
+      child: Image.asset(_logoAsset, height: 367.2, fit: BoxFit.contain),
     );
   }
 
