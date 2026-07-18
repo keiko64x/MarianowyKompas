@@ -713,7 +713,7 @@ class _MainScreenState extends State<MainScreen> {
   Widget _buildLogoHeader() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 11.4, horizontal: 22.8),
-      child: Image.asset(_logoAsset, height: 357.2, fit: BoxFit.contain),
+      child: Image.asset(_logoAsset, height: 178.6, fit: BoxFit.contain),
     );
   }
 
