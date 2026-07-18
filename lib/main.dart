@@ -16,7 +16,7 @@ const double arrivalRadiusMeters = 5.0;
 const String _destinationsKey = 'custom_destinations';
 const String _themeKey = 'app_theme';
 const String _skipWelcomeKey = 'skip_welcome';
-const String _logoAsset = 'ikona-szadejkompas2.1.png';
+const String _logoAsset = 'ikony/android/playstore-icon.png';
 const Duration _kMenuAnimDuration = Duration(milliseconds: 400);
 const double _kWelcomeLogoHeight = 132;
 const double _kSquareButtonSize = 72;
@@ -713,7 +713,7 @@ class _MainScreenState extends State<MainScreen> {
   Widget _buildLogoHeader() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 11.4, horizontal: 22.8),
-      child: Image.asset(_logoAsset, height: 367.2, fit: BoxFit.contain),
+      child: Image.asset(_logoAsset, height: 357.2, fit: BoxFit.contain),
     );
   }
 

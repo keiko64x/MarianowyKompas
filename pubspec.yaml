@@ -29,5 +29,4 @@ flutter_launcher_icons:
 flutter:
   uses-material-design: true
   assets:
-    - ikona-szadejkompas2.png
-    - ikona-szadejkompas2.1.png
+    - ikony/android/playstore-icon.png
