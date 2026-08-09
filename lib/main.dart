@@ -1,25 +1,28 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+
+import 'models/peer.dart';
+import 'models/user_profile.dart';
+import 'services/network_service.dart';
+import 'services/profile_store.dart';
+import 'utils/polling.dart';
 
 // ---------------------------------------------------------------------------
 // Stałe
 // ---------------------------------------------------------------------------
 
 const double arrivalRadiusMeters = 5.0;
-const String _destinationsKey = 'custom_destinations';
-const String _themeKey = 'app_theme';
-const String _skipWelcomeKey = 'skip_welcome';
 const String _logoAsset = 'ikony/android/playstore-icon.png';
 const Duration _kMenuAnimDuration = Duration(milliseconds: 400);
 const double _kWelcomeLogoHeight = 132;
 const double _kSquareButtonSize = 72;
+const Duration _kPendingPollInterval = Duration(seconds: 20);
 
 String _formatDistanceValue(double? meters) {
   if (meters == null) return '...';
@@ -32,12 +35,13 @@ String _formatDistanceUnit(double? meters) {
   return meters <= 1000 ? 'metrów' : 'km';
 }
 
-const Destination initialDefaultDestination = Destination(
-  id: 'default_marian_szadejko',
-  name: 'Marian Szadejko',
-  latitude: 53.414212,
-  longitude: 14.513921,
-);
+String _formatClock(DateTime? time) {
+  if (time == null) return '';
+  final local = time.toLocal();
+  final hh = local.hour.toString().padLeft(2, '0');
+  final mm = local.minute.toString().padLeft(2, '0');
+  return '$hh:$mm';
+}
 
 // ---------------------------------------------------------------------------
 // Motyw
@@ -82,21 +86,21 @@ class AppPalette {
 
 class AppSettings extends ChangeNotifier {
   AppThemeMode _theme = AppThemeMode.dark;
+  final ProfileStore _store = ProfileStore();
 
   AppThemeMode get theme => _theme;
   AppPalette get palette => AppPalette(_theme);
 
   Future<void> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    _theme = prefs.getString(_themeKey) == 'light' ? AppThemeMode.light : AppThemeMode.dark;
+    final value = await _store.loadTheme();
+    _theme = value == 'light' ? AppThemeMode.light : AppThemeMode.dark;
     notifyListeners();
   }
 
   Future<void> setTheme(AppThemeMode mode) async {
     _theme = mode;
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_themeKey, mode == AppThemeMode.light ? 'light' : 'dark');
+    await _store.saveTheme(mode == AppThemeMode.light ? 'light' : 'dark');
   }
 }
 
@@ -151,15 +155,14 @@ class _AppRootState extends State<_AppRoot> {
   }
 
   Future<void> _loadWelcomePref() async {
-    final prefs = await SharedPreferences.getInstance();
+    final skip = await ProfileStore().loadSkipWelcome();
     if (!mounted) return;
-    setState(() => _showWelcome = !(prefs.getBool(_skipWelcomeKey) ?? false));
+    setState(() => _showWelcome = !skip);
   }
 
   Future<void> _completeWelcome(bool dontShowAgain) async {
     if (dontShowAgain) {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_skipWelcomeKey, true);
+      await ProfileStore().setSkipWelcome(true);
     }
     if (!mounted) return;
     setState(() => _showWelcome = false);
@@ -213,9 +216,9 @@ class _WelcomeScreenState extends State<_WelcomeScreen> {
                   Image.asset(_logoAsset, height: _kWelcomeLogoHeight, fit: BoxFit.contain),
                   const SizedBox(height: 32),
                   Text(
-                    'Szadejkompas działa bez użycia internetu, nie wyszukuje się '
-                    'w nim miejsc jak w Google Maps, wskazuje on kierunek do '
-                    'konkretnych współrzędnych geograficznych, oraz dystans.',
+                    'Szadejkompas to radar osób w czasie rzeczywistym. '
+                    'Sparuj znajomego kodem QR, a po wybraniu go z listy '
+                    'nawiguj strzałką do jego aktualnej pozycji GPS.',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
@@ -273,111 +276,10 @@ class _WelcomeScreenState extends State<_WelcomeScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// Model i storage
-// ---------------------------------------------------------------------------
-
-class Destination {
-  const Destination({
-    required this.id,
-    required this.name,
-    required this.latitude,
-    required this.longitude,
-  });
-
-  final String id;
-  final String name;
-  final double latitude;
-  final double longitude;
-
-  Destination copyWith({String? name, double? latitude, double? longitude}) {
-    return Destination(
-      id: id,
-      name: name ?? this.name,
-      latitude: latitude ?? this.latitude,
-      longitude: longitude ?? this.longitude,
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'latitude': latitude,
-        'longitude': longitude,
-      };
-
-  factory Destination.fromJson(Map<String, dynamic> json) {
-    return Destination(
-      id: json['id'] as String,
-      name: json['name'] as String,
-      latitude: (json['latitude'] as num).toDouble(),
-      longitude: (json['longitude'] as num).toDouble(),
-    );
-  }
-}
-
-class DestinationStorage {
-  Future<List<Destination>> loadDestinations() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_destinationsKey);
-    if (raw == null || raw.isEmpty) {
-      final defaults = [initialDefaultDestination];
-      await saveDestinations(defaults);
-      return defaults;
-    }
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map((item) => Destination.fromJson(item as Map<String, dynamic>))
-        .toList();
-  }
-
-  Future<void> saveDestinations(List<Destination> destinations) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _destinationsKey,
-      jsonEncode(destinations.map((d) => d.toJson()).toList()),
-    );
-  }
-
-  Future<void> addDestination(Destination destination) async {
-    final current = await loadDestinations();
-    current.add(destination);
-    await saveDestinations(current);
-  }
-
-  Future<void> updateDestination(Destination destination) async {
-    final current = await loadDestinations();
-    final index = current.indexWhere((d) => d.id == destination.id);
-    if (index == -1) return;
-    current[index] = destination;
-    await saveDestinations(current);
-  }
-
-  Future<void> removeDestination(String id) async {
-    final current = await loadDestinations();
-    current.removeWhere((d) => d.id == id);
-    await saveDestinations(current);
-  }
-
-  Future<void> moveDestination(int fromIndex, int toIndex) async {
-    if (fromIndex == toIndex) return;
-    final current = await loadDestinations();
-    if (fromIndex < 0 ||
-        toIndex < 0 ||
-        fromIndex >= current.length ||
-        toIndex >= current.length) {
-      return;
-    }
-    final item = current.removeAt(fromIndex);
-    current.insert(toIndex, item);
-    await saveDestinations(current);
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Tryby ekranu
 // ---------------------------------------------------------------------------
 
-enum _ScreenMode { destinations, add, editList, editItem, info, compass }
+enum _ScreenMode { people, add, editList, editItem, info, compass }
 
 enum _MenuButton { list, add, edit, info }
 
@@ -394,62 +296,212 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
-  final DestinationStorage _storage = DestinationStorage();
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
+  final ProfileStore _store = ProfileStore();
+  final NetworkService _network = NetworkService();
 
-  _ScreenMode _mode = _ScreenMode.destinations;
-  List<Destination> _destinations = [];
-  Destination? _compassDestination;
-  Destination? _editingDestination;
+  _ScreenMode _mode = _ScreenMode.people;
+  UserProfile? _profile;
+  List<Peer> _peers = [];
+  Peer? _compassPeer;
+  Peer? _editingPeer;
 
   Position? _currentPosition;
+  Position? _lastKnownPosition;
   String? _gpsStatusMessage;
   double? _deviceHeading;
   String? _compassError;
   bool _compassPermissionGranted = false;
   bool _gpsSearchTimeout = false;
+  bool _bootstrapping = true;
+  String? _networkBanner;
+  bool _usingCachedPeerLocation = false;
+  DateTime? _peerLocationFetchedAt;
+  PeerLocation? _livePeerLocation;
 
   StreamSubscription<Position>? _positionSubscription;
   StreamSubscription<CompassEvent>? _compassSubscription;
   Timer? _gpsSearchTimer;
+  Timer? _pollTimer;
+  Timer? _pendingTimer;
+  bool _handlingPending = false;
+  final Set<String> _seenRequestIds = {};
 
   AppPalette get _palette => widget.settings.palette;
+  bool get _isCompassActive => _mode == _ScreenMode.compass;
 
   @override
   void initState() {
     super.initState();
-    _loadDestinations();
-    _initializeGps();
+    WidgetsBinding.instance.addObserver(this);
+    _bootstrap();
   }
 
   @override
   void dispose() {
-    _cancelGpsSearchTimer();
-    _positionSubscription?.cancel();
-    _compassSubscription?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _enterIdleMode();
+    _pendingTimer?.cancel();
+    _network.dispose();
     super.dispose();
   }
 
-  Future<void> _loadDestinations() async {
-    final saved = await _storage.loadDestinations();
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      _enterIdleMode(keepMode: true);
+      _pendingTimer?.cancel();
+    } else if (state == AppLifecycleState.resumed) {
+      if (_isCompassActive && _compassPeer != null) {
+        _startCompassSession(_compassPeer!);
+      } else {
+        _startPendingWatcher();
+        _refreshPeers();
+      }
+    }
+  }
+
+  Future<void> _bootstrap() async {
+    final cachedPeers = await _store.loadPeersCache();
+    var profile = await _store.loadProfile();
+
+    if (profile == null) {
+      try {
+        final deviceName = await _defaultDeviceName();
+        profile = await _network.registerProfile(deviceName);
+        await _store.saveProfile(profile);
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _bootstrapping = false;
+          _networkBanner = e is NetworkException
+              ? e.message
+              : 'Nie udało się zarejestrować profilu. Sprawdź sieć.';
+        });
+        return;
+      }
+    }
+
+    _network.setProfile(profile);
     if (!mounted) return;
-    setState(() => _destinations = saved);
+    setState(() {
+      _profile = profile;
+      _peers = cachedPeers;
+      _bootstrapping = false;
+    });
+
+    await _refreshPeers();
+    _startPendingWatcher();
+  }
+
+  Future<String> _defaultDeviceName() async {
+    // Prosta, czytelna nazwa profilu — użytkownik może ją zmienić później.
+    final stamp = DateTime.now().millisecondsSinceEpoch.toString().substring(7);
+    return 'Telefon $stamp';
+  }
+
+  Future<void> _refreshPeers() async {
+    if (_profile == null) return;
+    try {
+      final peers = await _network.fetchPeers();
+      await _store.savePeersCache(peers);
+      if (!mounted) return;
+      setState(() {
+        _peers = peers;
+        _networkBanner = null;
+      });
+    } on NetworkException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _networkBanner = e.offline
+            ? 'Brak zasięgu — pokazuję ostatnią znaną listę.'
+            : e.message;
+      });
+    }
+  }
+
+  void _startPendingWatcher() {
+    _pendingTimer?.cancel();
+    _pendingTimer = Timer.periodic(_kPendingPollInterval, (_) {
+      if (!_isCompassActive) {
+        _checkPendingPairs();
+      }
+    });
+    _checkPendingPairs();
+  }
+
+  Future<void> _checkPendingPairs() async {
+    if (_profile == null || _handlingPending || !mounted) return;
+    try {
+      final pending = await _network.fetchPendingPairs();
+      for (final request in pending) {
+        if (_seenRequestIds.contains(request.id)) continue;
+        _seenRequestIds.add(request.id);
+        _handlingPending = true;
+        final accepted = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            backgroundColor: _palette.containerBackground,
+            title: Text('Prośba o parowanie', style: TextStyle(color: _palette.textPrimary)),
+            content: Text(
+              '${request.fromName ?? 'Ktoś'} chce się z Tobą sparować. '
+              'Po akceptacji będziecie widoczni u siebie na liście.',
+              style: TextStyle(color: _palette.textPrimary),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text('Odrzuć', style: TextStyle(color: Colors.red.shade400)),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text('Akceptuj', style: TextStyle(color: _palette.accent)),
+              ),
+            ],
+          ),
+        );
+        try {
+          if (accepted == true) {
+            await _network.acceptPair(request.id);
+          } else {
+            await _network.rejectPair(request.id);
+          }
+          await _refreshPeers();
+        } on NetworkException catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+          }
+        } finally {
+          _handlingPending = false;
+        }
+      }
+    } catch (_) {
+      // ciche — pending nie blokuje UI
+    }
   }
 
   void _goToDefault() {
+    _enterIdleMode();
     setState(() {
-      _mode = _ScreenMode.destinations;
-      _compassDestination = null;
-      _editingDestination = null;
+      _mode = _ScreenMode.people;
+      _compassPeer = null;
+      _editingPeer = null;
       _compassError = null;
       _gpsSearchTimeout = false;
+      _usingCachedPeerLocation = false;
+      _livePeerLocation = null;
+      _peerLocationFetchedAt = null;
     });
-    _stopCompassSensors();
+    _startPendingWatcher();
+    _refreshPeers();
   }
 
   _MenuButton? get _activeMenuButton {
     switch (_mode) {
-      case _ScreenMode.destinations:
+      case _ScreenMode.people:
         return _MenuButton.list;
       case _ScreenMode.add:
         return _MenuButton.add;
@@ -463,12 +515,54 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  // --- GPS ---
+  // --- Idle / Compass session ---
 
-  Future<void> _initializeGps() async {
+  void _enterIdleMode({bool keepMode = false}) {
+    _cancelGpsSearchTimer();
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _positionSubscription?.cancel();
+    _positionSubscription = null;
+    _compassSubscription?.cancel();
+    _compassSubscription = null;
+    if (!keepMode) {
+      _compassPermissionGranted = false;
+      _deviceHeading = null;
+    }
+  }
+
+  Future<void> _openCompass(Peer peer) async {
+    _pendingTimer?.cancel();
+    setState(() {
+      _mode = _ScreenMode.compass;
+      _compassPeer = peer;
+      _compassError = null;
+      _gpsSearchTimeout = false;
+      _deviceHeading = null;
+      _usingCachedPeerLocation = false;
+      _livePeerLocation = peer.cachedLatitude != null && peer.cachedLongitude != null
+          ? PeerLocation(
+              userId: peer.userId,
+              latitude: peer.cachedLatitude!,
+              longitude: peer.cachedLongitude!,
+              timestamp: peer.cachedAt,
+              fetchedAt: peer.cachedAt,
+              lastActivityLabel: peer.lastActivityLabel,
+            )
+          : null;
+      _peerLocationFetchedAt = peer.cachedAt;
+    });
+    await _startCompassSession(peer);
+  }
+
+  Future<void> _startCompassSession(Peer peer) async {
+    _enterIdleMode(keepMode: true);
+    _startGpsSearchTimer();
+
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      setState(() => _gpsStatusMessage = 'GPS wyłączony — włącz lokalizację w ustawieniach.');
+      if (!mounted) return;
+      setState(() => _compassError = 'Włącz lokalizację GPS w ustawieniach telefonu.');
       return;
     }
 
@@ -476,14 +570,19 @@ class _MainScreenState extends State<MainScreen> {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
-
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
-      setState(() => _gpsStatusMessage = 'Brak dostępu do lokalizacji.');
+      if (!mounted) return;
+      setState(() => _compassError = 'Brak dostępu do lokalizacji.');
       return;
     }
 
-    _positionSubscription?.cancel();
+    if (!mounted) return;
+    setState(() {
+      _compassPermissionGranted = true;
+      _compassError = null;
+    });
+
     _positionSubscription = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.best,
@@ -491,27 +590,123 @@ class _MainScreenState extends State<MainScreen> {
       ),
     ).listen(
       (position) {
-        if (!mounted) return;
+        if (!mounted || !_isCompassActive) return;
         setState(() {
           _currentPosition = position;
+          _lastKnownPosition = position;
           _gpsStatusMessage = null;
-          if (_mode == _ScreenMode.compass) {
-            _gpsSearchTimeout = false;
-          }
+          _gpsSearchTimeout = false;
         });
-        if (_mode == _ScreenMode.compass) _cancelGpsSearchTimer();
+        _cancelGpsSearchTimer();
       },
       onError: (_) {
         if (!mounted) return;
         setState(() => _gpsStatusMessage = 'Nie udało się odczytać pozycji GPS.');
       },
     );
+
+    _compassSubscription = FlutterCompass.events?.listen(
+      (event) {
+        if (!mounted || !_isCompassActive) return;
+        final heading = event.heading;
+        if (heading != null) setState(() => _deviceHeading = heading);
+      },
+      onError: (_) {
+        if (!mounted) return;
+        setState(() => _compassError = 'Nie udało się odczytać kompasu.');
+      },
+    );
+
+    await _pollOnce(peer);
+    _scheduleNextPoll(peer);
+  }
+
+  void _scheduleNextPoll(Peer peer) {
+    _pollTimer?.cancel();
+    if (!_isCompassActive) return;
+    final distance = _distanceToTarget();
+    final wait = pollingIntervalForDistance(distance);
+    _pollTimer = Timer(wait, () async {
+      if (!_isCompassActive || _compassPeer?.userId != peer.userId) return;
+      await _pollOnce(peer);
+      _scheduleNextPoll(peer);
+    });
+  }
+
+  Future<void> _pollOnce(Peer peer) async {
+    final me = _currentPosition ?? _lastKnownPosition;
+    if (me != null) {
+      try {
+        await _network.updateLocation(
+          lat: me.latitude,
+          lng: me.longitude,
+          accuracy: me.accuracy,
+        );
+      } on NetworkException catch (e) {
+        if (mounted && e.offline) {
+          setState(() => _networkBanner = 'Brak zasięgu — używam ostatniej znanej pozycji.');
+        }
+      }
+    }
+
+    try {
+      final loc = await _network.fetchLocation(peer.userId);
+      if (!mounted || _compassPeer?.userId != peer.userId) return;
+      final updatedPeers = _peers.map((p) {
+        if (p.userId != peer.userId) return p;
+        return p.copyWith(
+          cachedLatitude: loc.latitude,
+          cachedLongitude: loc.longitude,
+          cachedAt: loc.timestamp ?? loc.fetchedAt,
+          lastSeenAt: loc.timestamp?.toIso8601String(),
+          lastActivityLabel: loc.lastActivityLabel ?? p.lastActivityLabel,
+          hasLocation: true,
+        );
+      }).toList();
+      await _store.savePeersCache(updatedPeers);
+      setState(() {
+        _peers = updatedPeers;
+        _livePeerLocation = loc;
+        _peerLocationFetchedAt = loc.fetchedAt ?? DateTime.now();
+        _usingCachedPeerLocation = false;
+        _networkBanner = null;
+        _compassPeer = updatedPeers.firstWhere(
+          (p) => p.userId == peer.userId,
+          orElse: () => peer,
+        );
+      });
+    } on NetworkException catch (e) {
+      if (!mounted) return;
+      if (_livePeerLocation != null ||
+          (peer.cachedLatitude != null && peer.cachedLongitude != null)) {
+        setState(() {
+          _usingCachedPeerLocation = true;
+          _networkBanner = e.offline
+              ? 'Brak zasięgu — ostatnia znana pozycja ${_formatClock(_peerLocationFetchedAt ?? peer.cachedAt)}'
+              : e.message;
+          if (_livePeerLocation == null &&
+              peer.cachedLatitude != null &&
+              peer.cachedLongitude != null) {
+            _livePeerLocation = PeerLocation(
+              userId: peer.userId,
+              latitude: peer.cachedLatitude!,
+              longitude: peer.cachedLongitude!,
+              timestamp: peer.cachedAt,
+              fetchedAt: peer.cachedAt,
+            );
+            _peerLocationFetchedAt = peer.cachedAt;
+          }
+        });
+      } else {
+        setState(() => _networkBanner = e.message);
+      }
+    }
   }
 
   void _startGpsSearchTimer() {
     _gpsSearchTimer?.cancel();
     _gpsSearchTimer = Timer(const Duration(minutes: 1), () {
-      if (!mounted || _currentPosition != null) return;
+      if (!mounted || _currentPosition != null || !_isCompassActive) return;
       setState(() => _gpsSearchTimeout = true);
     });
   }
@@ -521,104 +716,45 @@ class _MainScreenState extends State<MainScreen> {
     _gpsSearchTimer = null;
   }
 
-  // --- Kompas ---
-
-  void _openCompass(Destination destination) {
-    setState(() {
-      _mode = _ScreenMode.compass;
-      _compassDestination = destination;
-      _compassError = null;
-      _gpsSearchTimeout = false;
-      _deviceHeading = null;
-    });
-    _startCompassSensors();
-  }
-
-  Future<void> _startCompassSensors() async {
-    _startGpsSearchTimer();
-
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      setState(() {
-        _compassError = 'Włącz lokalizację GPS w ustawieniach telefonu.';
-      });
-      return;
-    }
-
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      setState(() => _compassError = 'Brak dostępu do lokalizacji.');
-      return;
-    }
-
-    setState(() {
-      _compassPermissionGranted = true;
-      _compassError = null;
-    });
-
-    _compassSubscription?.cancel();
-    _compassSubscription = FlutterCompass.events?.listen(
-      (event) {
-        if (!mounted) return;
-        final heading = event.heading;
-        if (heading != null) setState(() => _deviceHeading = heading);
-      },
-      onError: (_) {
-        if (!mounted) return;
-        setState(() => _compassError = 'Nie udało się odczytać kompasu.');
-      },
-    );
-  }
-
-  void _stopCompassSensors() {
-    _cancelGpsSearchTimer();
-    _compassSubscription?.cancel();
-    _compassSubscription = null;
-  }
-
   double? _distanceToTarget() {
-    if (_currentPosition == null || _compassDestination == null) return null;
-    return Geolocator.distanceBetween(
-      _currentPosition!.latitude,
-      _currentPosition!.longitude,
-      _compassDestination!.latitude,
-      _compassDestination!.longitude,
+    final me = _currentPosition ?? _lastKnownPosition;
+    final target = _livePeerLocation;
+    if (me == null || target == null) return null;
+    return haversineMeters(
+      me.latitude,
+      me.longitude,
+      target.latitude,
+      target.longitude,
     );
   }
 
   double? _arrowRotationDegrees() {
-    if (_currentPosition == null ||
-        _compassDestination == null ||
-        _deviceHeading == null) {
-      return null;
-    }
+    final me = _currentPosition ?? _lastKnownPosition;
+    final target = _livePeerLocation;
+    if (me == null || target == null || _deviceHeading == null) return null;
     final bearing = Geolocator.bearingBetween(
-      _currentPosition!.latitude,
-      _currentPosition!.longitude,
-      _compassDestination!.latitude,
-      _compassDestination!.longitude,
+      me.latitude,
+      me.longitude,
+      target.latitude,
+      target.longitude,
     );
-    double rotation = bearing - _deviceHeading!;
-    return (rotation + 360) % 360;
+    return (bearing - _deviceHeading! + 360) % 360;
   }
 
-  // --- Akcje menu ---
+  // --- Menu ---
 
   void _toggleMenu(_MenuButton button) {
     if (_activeMenuButton == button) {
       _goToDefault();
       return;
     }
+    _enterIdleMode();
     setState(() {
-      _editingDestination = null;
+      _editingPeer = null;
+      _compassPeer = null;
       switch (button) {
         case _MenuButton.list:
-          _mode = _ScreenMode.destinations;
+          _mode = _ScreenMode.people;
         case _MenuButton.add:
           _mode = _ScreenMode.add;
         case _MenuButton.edit:
@@ -627,58 +763,104 @@ class _MainScreenState extends State<MainScreen> {
           _mode = _ScreenMode.info;
       }
     });
+    _startPendingWatcher();
+    if (button == _MenuButton.list || button == _MenuButton.edit) {
+      _refreshPeers();
+    }
   }
 
-  Future<void> _addDestination(Destination destination) async {
-    await _storage.addDestination(destination);
-    await _loadDestinations();
-    _goToDefault();
+  Future<void> _scanAndPair() async {
+    final raw = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => QrScanScreen(palette: _palette)),
+    );
+    if (raw == null || raw.isEmpty || !mounted) return;
+    try {
+      await _network.requestPairFromQr(raw);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Wysłano prośbę o parowanie. Poczekaj na akceptację.'),
+        ),
+      );
+      await _refreshPeers();
+    } on NetworkException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
   }
 
-  Future<void> _saveEditedDestination(Destination destination) async {
-    await _storage.updateDestination(destination);
-    await _loadDestinations();
-    setState(() {
-      _mode = _ScreenMode.editList;
-      _editingDestination = null;
-    });
+  Future<void> _renameProfile(String name) async {
+    if (_profile == null || name.trim().isEmpty) return;
+    final clean = name.trim();
+    try {
+      final updated = await _network.updateProfileName(clean);
+      await _store.saveProfile(updated);
+      if (!mounted) return;
+      setState(() => _profile = updated);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Zapisano nazwę profilu')),
+      );
+    } on NetworkException catch (e) {
+      final local = _profile!.copyWith(name: clean);
+      await _store.saveProfile(local);
+      _network.setProfile(local);
+      if (!mounted) return;
+      setState(() => _profile = local);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Zapisano lokalnie (${e.message})')),
+      );
+    }
   }
 
-  Future<void> _deleteDestination(Destination destination) async {
+  Future<void> _saveEditedPeer(Peer peer, String displayName) async {
+    try {
+      await _network.renamePeer(peer.userId, displayName);
+      await _refreshPeers();
+      if (!mounted) return;
+      setState(() {
+        _mode = _ScreenMode.editList;
+        _editingPeer = null;
+      });
+    } on NetworkException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
+  Future<void> _deletePeer(Peer peer) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: _palette.containerBackground,
-        title: Text('Usunąć miejsce?', style: TextStyle(color: _palette.textPrimary)),
+        title: Text('Odparować?', style: TextStyle(color: _palette.textPrimary)),
         content: Text(
-          'Czy na pewno usunąć „${destination.name}"?',
+          'Czy na pewno usunąć relację z „${peer.displayName}"? '
+          'Znikniecie u siebie z list.',
           style: TextStyle(color: _palette.textPrimary),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Anuluj')),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text('Usuń', style: TextStyle(color: Colors.red.shade400)),
+            child: Text('Odparuj', style: TextStyle(color: Colors.red.shade400)),
           ),
         ],
       ),
     );
     if (confirmed != true) return;
-    await _storage.removeDestination(destination.id);
-    await _loadDestinations();
-    if (_editingDestination?.id == destination.id) {
-      setState(() {
-        _mode = _ScreenMode.editList;
-        _editingDestination = null;
-      });
+    try {
+      await _network.unpair(peer.userId);
+      await _refreshPeers();
+      if (_editingPeer?.userId == peer.userId && mounted) {
+        setState(() {
+          _mode = _ScreenMode.editList;
+          _editingPeer = null;
+        });
+      }
+    } on NetworkException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     }
-  }
-
-  Future<void> _moveDestination(int index, int direction) async {
-    final target = index + direction;
-    if (target < 0 || target >= _destinations.length) return;
-    await _storage.moveDestination(index, target);
-    await _loadDestinations();
   }
 
   // --- Build ---
@@ -688,6 +870,13 @@ class _MainScreenState extends State<MainScreen> {
     return ListenableBuilder(
       listenable: widget.settings,
       builder: (context, _) {
+        if (_bootstrapping) {
+          return Scaffold(
+            backgroundColor: _palette.background,
+            body: const Center(child: CircularProgressIndicator()),
+          );
+        }
+
         return Scaffold(
           resizeToAvoidBottomInset: false,
           backgroundColor: _palette.background,
@@ -695,12 +884,22 @@ class _MainScreenState extends State<MainScreen> {
             child: Column(
               children: [
                 _buildLogoHeader(),
+                if (_networkBanner != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                    child: Text(
+                      _networkBanner!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.orange.shade300, fontSize: 13),
+                    ),
+                  ),
                 Expanded(child: _buildCenterContainer()),
                 _buildBottomArea(),
                 _GpsBar(
                   palette: _palette,
-                  position: _currentPosition,
+                  position: _isCompassActive ? _currentPosition : _lastKnownPosition,
                   statusMessage: _gpsStatusMessage,
+                  idleHint: !_isCompassActive,
                 ),
               ],
             ),
@@ -737,43 +936,44 @@ class _MainScreenState extends State<MainScreen> {
 
   Widget _buildCenterContent() {
     switch (_mode) {
-      case _ScreenMode.destinations:
-        return _DestinationsListView(
+      case _ScreenMode.people:
+        return _PeopleListView(
           palette: _palette,
-          destinations: _destinations,
+          peers: _peers,
           showEditControls: false,
           onTap: _openCompass,
+          onRefresh: _refreshPeers,
         );
       case _ScreenMode.add:
-        return _AddForm(
+        return _PairingTab(
           palette: _palette,
-          currentPosition: _currentPosition,
-          onSave: _addDestination,
+          profile: _profile,
+          onScan: _scanAndPair,
+          onRenameProfile: _renameProfile,
         );
       case _ScreenMode.editList:
-        return _DestinationsListView(
+        return _PeopleListView(
           palette: _palette,
-          destinations: _destinations,
+          peers: _peers,
           showEditControls: true,
           onTap: (_) {},
-          onEdit: (d) => setState(() {
+          onEdit: (p) => setState(() {
             _mode = _ScreenMode.editItem;
-            _editingDestination = d;
+            _editingPeer = p;
           }),
-          onDelete: _deleteDestination,
-          onMoveUp: (i) => _moveDestination(i, -1),
-          onMoveDown: (i) => _moveDestination(i, 1),
+          onDelete: _deletePeer,
+          onRefresh: _refreshPeers,
         );
       case _ScreenMode.editItem:
-        if (_editingDestination == null) return const SizedBox.shrink();
-        return _EditForm(
+        if (_editingPeer == null) return const SizedBox.shrink();
+        return _EditPeerForm(
           palette: _palette,
-          destination: _editingDestination!,
-          onSave: _saveEditedDestination,
-          onDelete: () => _deleteDestination(_editingDestination!),
+          peer: _editingPeer!,
+          onSave: (name) => _saveEditedPeer(_editingPeer!, name),
+          onDelete: () => _deletePeer(_editingPeer!),
           onBack: () => setState(() {
             _mode = _ScreenMode.editList;
-            _editingDestination = null;
+            _editingPeer = null;
           }),
         );
       case _ScreenMode.info:
@@ -781,14 +981,16 @@ class _MainScreenState extends State<MainScreen> {
       case _ScreenMode.compass:
         return _CompassView(
           palette: _palette,
-          destination: _compassDestination!,
+          peer: _compassPeer!,
           errorMessage: _compassError,
           permissionGranted: _compassPermissionGranted,
-          currentPosition: _currentPosition,
+          currentPosition: _currentPosition ?? _lastKnownPosition,
           deviceHeading: _deviceHeading,
           gpsSearchTimeout: _gpsSearchTimeout,
           distance: _distanceToTarget(),
           rotation: _arrowRotationDegrees(),
+          usingCachedLocation: _usingCachedPeerLocation,
+          locationFetchedAt: _peerLocationFetchedAt,
         );
     }
   }
@@ -814,7 +1016,7 @@ class _MainScreenState extends State<MainScreen> {
         children: [
           _buildMenuButton(_MenuButton.list, 'Lista', Icons.list),
           const SizedBox(width: 8),
-          _buildMenuButton(_MenuButton.add, 'Dodaj', Icons.add),
+          _buildMenuButton(_MenuButton.add, 'Dodaj', Icons.qr_code_2),
           const SizedBox(width: 8),
           _buildMenuButton(_MenuButton.edit, 'Edytuj', Icons.edit),
           const SizedBox(width: 8),
@@ -843,7 +1045,8 @@ class _MainScreenState extends State<MainScreen> {
   Widget _buildCompassFooter() {
     final distance = _distanceToTarget();
     final isReady = _compassPermissionGranted &&
-        _currentPosition != null &&
+        (_currentPosition != null || _lastKnownPosition != null) &&
+        _livePeerLocation != null &&
         _deviceHeading != null &&
         _compassError == null;
 
@@ -958,24 +1161,8 @@ class _KeyboardDismissButton extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    'schowaj',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      height: 1.1,
-                      color: fg,
-                    ),
-                  ),
-                  Text(
-                    'klawiaturę',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      height: 1.1,
-                      color: fg,
-                    ),
-                  ),
+                  Text('schowaj', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, height: 1.1, color: fg)),
+                  Text('klawiaturę', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, height: 1.1, color: fg)),
                 ],
               ),
               const SizedBox(width: 10),
@@ -994,7 +1181,6 @@ class _SquareMenuButton extends StatelessWidget {
     required this.icon,
     required this.onPressed,
     this.label,
-    this.stackedWords,
     this.labelAboveIcon = false,
     this.isActive = false,
   });
@@ -1003,7 +1189,6 @@ class _SquareMenuButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onPressed;
   final String? label;
-  final List<String>? stackedWords;
   final bool labelAboveIcon;
   final bool isActive;
 
@@ -1014,56 +1199,22 @@ class _SquareMenuButton extends StatelessWidget {
         : palette.buttonForeground;
     final background = isActive ? palette.accent : palette.buttonBackground;
 
-    Widget content;
-    if (stackedWords != null && stackedWords!.isNotEmpty) {
-      content = Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          for (final word in stackedWords!)
-            Text(
-              word,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-                color: foreground,
-              ),
-            ),
-          const SizedBox(height: 4),
-          Icon(icon, size: 24, color: foreground),
-        ],
-      );
-    } else if (label != null) {
-      content = Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          if (labelAboveIcon) ...[
-            Text(
-              label!,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-                color: foreground,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Icon(icon, size: 28, color: foreground),
-          ] else ...[
-            Icon(icon, size: 28, color: foreground),
-            const SizedBox(height: 4),
-            Text(
-              label!,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: foreground,
-              ),
-            ),
-          ],
-        ],
-      );
-    } else {
-      content = Center(child: Icon(icon, size: 32, color: foreground));
-    }
+    final content = label == null
+        ? Center(child: Icon(icon, size: 32, color: foreground))
+        : Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (labelAboveIcon) ...[
+                Text(label!, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: foreground)),
+                const SizedBox(height: 4),
+                Icon(icon, size: 28, color: foreground),
+              ] else ...[
+                Icon(icon, size: 28, color: foreground),
+                const SizedBox(height: 4),
+                Text(label!, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: foreground)),
+              ],
+            ],
+          );
 
     return AnimatedContainer(
       duration: _kMenuAnimDuration,
@@ -1089,11 +1240,13 @@ class _GpsBar extends StatelessWidget {
     required this.palette,
     required this.position,
     required this.statusMessage,
+    this.idleHint = false,
   });
 
   final AppPalette palette;
   final Position? position;
   final String? statusMessage;
+  final bool idleHint;
 
   @override
   Widget build(BuildContext context) {
@@ -1103,6 +1256,8 @@ class _GpsBar extends StatelessWidget {
     } else if (position != null) {
       text =
           'Twoja pozycja: ${position!.latitude.toStringAsFixed(6)}, ${position!.longitude.toStringAsFixed(6)}';
+    } else if (idleHint) {
+      text = 'GPS uśpiony — włączy się po wyborze osoby z listy';
     } else {
       text = 'Szukam Twojej pozycji GPS...';
     }
@@ -1117,29 +1272,27 @@ class _GpsBar extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Lista destynacji
+// Lista osób
 // ---------------------------------------------------------------------------
 
-class _DestinationsListView extends StatelessWidget {
-  const _DestinationsListView({
+class _PeopleListView extends StatelessWidget {
+  const _PeopleListView({
     required this.palette,
-    required this.destinations,
+    required this.peers,
     required this.showEditControls,
     required this.onTap,
     this.onEdit,
     this.onDelete,
-    this.onMoveUp,
-    this.onMoveDown,
+    this.onRefresh,
   });
 
   final AppPalette palette;
-  final List<Destination> destinations;
+  final List<Peer> peers;
   final bool showEditControls;
-  final ValueChanged<Destination> onTap;
-  final ValueChanged<Destination>? onEdit;
-  final ValueChanged<Destination>? onDelete;
-  final ValueChanged<int>? onMoveUp;
-  final ValueChanged<int>? onMoveDown;
+  final ValueChanged<Peer> onTap;
+  final ValueChanged<Peer>? onEdit;
+  final ValueChanged<Peer>? onDelete;
+  final Future<void> Function()? onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -1148,89 +1301,95 @@ class _DestinationsListView extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Text(
-            'Destynacje',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: palette.textPrimary,
-            ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  showEditControls ? 'Edytuj osoby' : 'Osoby',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: palette.textPrimary,
+                  ),
+                ),
+              ),
+              if (onRefresh != null)
+                IconButton(
+                  onPressed: () => onRefresh?.call(),
+                  icon: Icon(Icons.refresh, color: palette.accent),
+                ),
+            ],
           ),
         ),
         Expanded(
-          child: destinations.isEmpty
+          child: peers.isEmpty
               ? Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
                     child: Text(
-                      'Brak zapisanych miejsc.\nNaciśnij „dodaj destynację".',
+                      'Brak sparowanych osób.\nPrzejdź do „Dodaj” i zeskanuj kod QR.',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.headlineMedium,
                     ),
                   ),
                 )
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                  itemCount: destinations.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (context, index) {
-                    final d = destinations[index];
-                    final showArrows = destinations.length > 1;
-                    final canUp = showArrows && index > 0;
-                    final canDown = showArrows && index < destinations.length - 1;
-
-                    return Material(
-                      color: palette.surface,
-                      borderRadius: BorderRadius.circular(10),
-                      child: InkWell(
-                        onTap: showEditControls ? null : () => onTap(d),
+              : RefreshIndicator(
+                  onRefresh: () => onRefresh?.call() ?? Future.value(),
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                    itemCount: peers.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final peer = peers[index];
+                      return Material(
+                        color: palette.surface,
                         borderRadius: BorderRadius.circular(10),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
-                          child: Row(
-                            children: [
-                              if (showEditControls && showArrows) ...[
-                                SizedBox(
-                                  width: 40,
+                        child: InkWell(
+                          onTap: showEditControls ? null : () => onTap(peer),
+                          borderRadius: BorderRadius.circular(10),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+                            child: Row(
+                              children: [
+                                Icon(Icons.person_pin_circle, size: 28, color: palette.accent),
+                                const SizedBox(width: 10),
+                                Expanded(
                                   child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      if (canUp)
-                                        IconButton(
-                                          onPressed: () => onMoveUp?.call(index),
-                                          icon: Icon(Icons.arrow_upward, color: palette.accent),
-                                          iconSize: 26,
+                                      Text(
+                                        peer.displayName,
+                                        style: Theme.of(context).textTheme.titleLarge,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        peer.lastActivityLabel,
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          color: palette.textSecondary,
                                         ),
-                                      if (canDown)
-                                        IconButton(
-                                          onPressed: () => onMoveDown?.call(index),
-                                          icon: Icon(Icons.arrow_downward, color: palette.accent),
-                                          iconSize: 26,
-                                        ),
+                                      ),
                                     ],
                                   ),
                                 ),
+                                if (showEditControls) ...[
+                                  IconButton(
+                                    onPressed: () => onEdit?.call(peer),
+                                    icon: Icon(Icons.edit_outlined, color: palette.accent, size: 28),
+                                  ),
+                                  IconButton(
+                                    onPressed: () => onDelete?.call(peer),
+                                    icon: Icon(Icons.link_off, color: Colors.red.shade400, size: 28),
+                                  ),
+                                ] else
+                                  Icon(Icons.chevron_right, color: palette.textSecondary),
                               ],
-                              Icon(Icons.place, size: 28, color: palette.accent),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(d.name, style: Theme.of(context).textTheme.titleLarge),
-                              ),
-                              if (showEditControls) ...[
-                                IconButton(
-                                  onPressed: () => onEdit?.call(d),
-                                  icon: Icon(Icons.edit_outlined, color: palette.accent, size: 28),
-                                ),
-                                IconButton(
-                                  onPressed: () => onDelete?.call(d),
-                                  icon: Icon(Icons.delete_outline, color: Colors.red.shade400, size: 28),
-                                ),
-                              ],
-                            ],
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
         ),
       ],
@@ -1239,128 +1398,192 @@ class _DestinationsListView extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Formularz dodawania
+// Zakładka parowania QR
 // ---------------------------------------------------------------------------
 
-class _AddForm extends StatefulWidget {
-  const _AddForm({
+class _PairingTab extends StatefulWidget {
+  const _PairingTab({
     required this.palette,
-    required this.currentPosition,
-    required this.onSave,
+    required this.profile,
+    required this.onScan,
+    required this.onRenameProfile,
   });
 
   final AppPalette palette;
-  final Position? currentPosition;
-  final ValueChanged<Destination> onSave;
+  final UserProfile? profile;
+  final Future<void> Function() onScan;
+  final ValueChanged<String> onRenameProfile;
 
   @override
-  State<_AddForm> createState() => _AddFormState();
+  State<_PairingTab> createState() => _PairingTabState();
 }
 
-class _AddFormState extends State<_AddForm> {
-  final _nameController = TextEditingController();
-  final _latController = TextEditingController();
-  final _lngController = TextEditingController();
-  String? _error;
+class _PairingTabState extends State<_PairingTab> {
+  late final TextEditingController _nameController;
 
   @override
   void initState() {
     super.initState();
-    _fillFromGps();
+    _nameController = TextEditingController(text: widget.profile?.name ?? '');
   }
 
   @override
-  void didUpdateWidget(_AddForm oldWidget) {
+  void didUpdateWidget(covariant _PairingTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.currentPosition != null &&
-        oldWidget.currentPosition != widget.currentPosition &&
-        _latController.text.isEmpty) {
-      _fillFromGps();
+    if (widget.profile?.name != oldWidget.profile?.name &&
+        widget.profile?.name != _nameController.text) {
+      _nameController.text = widget.profile?.name ?? '';
     }
-  }
-
-  void _fillFromGps() {
-    final p = widget.currentPosition;
-    if (p == null) return;
-    _latController.text = p.latitude.toStringAsFixed(6);
-    _lngController.text = p.longitude.toStringAsFixed(6);
   }
 
   @override
   void dispose() {
     _nameController.dispose();
-    _latController.dispose();
-    _lngController.dispose();
     super.dispose();
-  }
-
-  void _copyCoords() {
-    final lat = _latController.text.trim();
-    final lng = _lngController.text.trim();
-    if (lat.isEmpty || lng.isEmpty) return;
-    Clipboard.setData(ClipboardData(text: '$lat, $lng'));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Skopiowano współrzędne'), duration: Duration(seconds: 2)),
-    );
-  }
-
-  void _save() {
-    final name = _nameController.text.trim();
-    if (name.isEmpty) {
-      setState(() => _error = 'Podaj nazwę miejsca.');
-      return;
-    }
-    final lat = double.tryParse(_latController.text.replaceAll(',', '.'));
-    final lng = double.tryParse(_lngController.text.replaceAll(',', '.'));
-    if (lat == null || lng == null) {
-      setState(() => _error = 'Wpisz poprawne współrzędne.');
-      return;
-    }
-    widget.onSave(Destination(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      name: name,
-      latitude: lat,
-      longitude: lng,
-    ));
   }
 
   @override
   Widget build(BuildContext context) {
+    final profile = widget.profile;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Dodaj miejsce', style: Theme.of(context).textTheme.headlineMedium),
-          const SizedBox(height: 16),
-          _TextField(controller: _nameController, label: 'Nazwa miejsca', palette: widget.palette),
+          Text('Twój kod QR', style: Theme.of(context).textTheme.headlineMedium),
+          const SizedBox(height: 8),
+          Text(
+            'Pokaż ten kod drugiej osobie, aby Was sparować.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
           const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: _fillFromGps,
-            icon: Icon(Icons.my_location, color: widget.palette.accent),
-            label: Text('Zapisz tutaj, gdzie stoję', style: TextStyle(color: widget.palette.accent)),
-            style: OutlinedButton.styleFrom(side: BorderSide(color: widget.palette.accent)),
+          TextField(
+            controller: _nameController,
+            style: TextStyle(color: widget.palette.textPrimary, fontSize: 18),
+            decoration: InputDecoration(
+              labelText: 'Nazwa profilu',
+              labelStyle: TextStyle(color: widget.palette.textSecondary),
+              border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                icon: Icon(Icons.save_outlined, color: widget.palette.accent),
+                onPressed: () => widget.onRenameProfile(_nameController.text),
+              ),
+            ),
+            onSubmitted: widget.onRenameProfile,
           ),
           const SizedBox(height: 16),
-          _CoordsBox(
-            latController: _latController,
-            lngController: _lngController,
-            onCopy: _copyCoords,
-            palette: widget.palette,
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Text(_error!, style: TextStyle(color: Colors.red.shade400, fontSize: 16)),
+          if (profile != null)
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: QrImageView(
+                  data: profile.toQrPayload(),
+                  version: QrVersions.auto,
+                  size: 220,
+                  backgroundColor: Colors.white,
+                ),
+              ),
+            )
+          else
+            const Center(child: CircularProgressIndicator()),
+          if (profile != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              profile.name,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: widget.palette.textPrimary,
+                fontWeight: FontWeight.w600,
+                fontSize: 16,
+              ),
+            ),
           ],
-          const SizedBox(height: 20),
-          ElevatedButton(
-            onPressed: _save,
+          const SizedBox(height: 28),
+          Text('Skanuj kod QR', style: Theme.of(context).textTheme.headlineMedium),
+          const SizedBox(height: 8),
+          Text(
+            'Zeskanuj kod znajomego — wyślemy prośbę o dwustronne parowanie.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: widget.onScan,
+            icon: const Icon(Icons.qr_code_scanner),
+            label: const Text('Skanuj kod QR', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             style: ElevatedButton.styleFrom(
               backgroundColor: widget.palette.accent,
-            foregroundColor: widget.palette.isDark ? Colors.black : Colors.white,
+              foregroundColor: widget.palette.isDark ? Colors.black : Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
             ),
-            child: const Text('Zapisz', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class QrScanScreen extends StatefulWidget {
+  const QrScanScreen({super.key, required this.palette});
+
+  final AppPalette palette;
+
+  @override
+  State<QrScanScreen> createState() => _QrScanScreenState();
+}
+
+class _QrScanScreenState extends State<QrScanScreen> {
+  final MobileScannerController _controller = MobileScannerController(
+    detectionSpeed: DetectionSpeed.normal,
+    facing: CameraFacing.back,
+  );
+  bool _handled = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onDetect(BarcodeCapture capture) {
+    if (_handled) return;
+    final raw = capture.barcodes
+        .map((b) => b.rawValue)
+        .whereType<String>()
+        .firstWhere((v) => v.trim().isNotEmpty, orElse: () => '');
+    if (raw.isEmpty) return;
+    _handled = true;
+    Navigator.of(context).pop(raw);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: widget.palette.background,
+        title: const Text('Skanuj kod QR'),
+      ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          MobileScanner(controller: _controller, onDetect: _onDetect),
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Container(
+              width: double.infinity,
+              color: Colors.black54,
+              padding: const EdgeInsets.all(16),
+              child: const Text(
+                'Skieruj aparat na kod QR znajomego. '
+                'Przy pierwszym użyciu zezwól na dostęp do kamery.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white, fontSize: 15),
+              ),
+            ),
           ),
         ],
       ),
@@ -1369,74 +1592,51 @@ class _AddFormState extends State<_AddForm> {
 }
 
 // ---------------------------------------------------------------------------
-// Formularz edycji
+// Edycja osoby
 // ---------------------------------------------------------------------------
 
-class _EditForm extends StatefulWidget {
-  const _EditForm({
+class _EditPeerForm extends StatefulWidget {
+  const _EditPeerForm({
     required this.palette,
-    required this.destination,
+    required this.peer,
     required this.onSave,
     required this.onDelete,
     required this.onBack,
   });
 
   final AppPalette palette;
-  final Destination destination;
-  final ValueChanged<Destination> onSave;
+  final Peer peer;
+  final ValueChanged<String> onSave;
   final VoidCallback onDelete;
   final VoidCallback onBack;
 
   @override
-  State<_EditForm> createState() => _EditFormState();
+  State<_EditPeerForm> createState() => _EditPeerFormState();
 }
 
-class _EditFormState extends State<_EditForm> {
+class _EditPeerFormState extends State<_EditPeerForm> {
   late final TextEditingController _nameController;
-  late final TextEditingController _latController;
-  late final TextEditingController _lngController;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.destination.name);
-    _latController =
-        TextEditingController(text: widget.destination.latitude.toStringAsFixed(6));
-    _lngController =
-        TextEditingController(text: widget.destination.longitude.toStringAsFixed(6));
+    _nameController = TextEditingController(text: widget.peer.displayName);
   }
 
   @override
   void dispose() {
     _nameController.dispose();
-    _latController.dispose();
-    _lngController.dispose();
     super.dispose();
-  }
-
-  void _copyCoords() {
-    Clipboard.setData(ClipboardData(
-      text: '${_latController.text.trim()}, ${_lngController.text.trim()}',
-    ));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Skopiowano współrzędne'), duration: Duration(seconds: 2)),
-    );
   }
 
   void _save() {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
-      setState(() => _error = 'Podaj nazwę.');
+      setState(() => _error = 'Podaj nazwę wyświetlaną.');
       return;
     }
-    final lat = double.tryParse(_latController.text.replaceAll(',', '.'));
-    final lng = double.tryParse(_lngController.text.replaceAll(',', '.'));
-    if (lat == null || lng == null) {
-      setState(() => _error = 'Wpisz poprawne współrzędne.');
-      return;
-    }
-    widget.onSave(widget.destination.copyWith(name: name, latitude: lat, longitude: lng));
+    widget.onSave(name);
   }
 
   @override
@@ -1448,18 +1648,27 @@ class _EditFormState extends State<_EditForm> {
         children: [
           Row(
             children: [
-              IconButton(onPressed: widget.onBack, icon: Icon(Icons.arrow_back, color: widget.palette.accent)),
-              Text('Edytuj miejsce', style: Theme.of(context).textTheme.headlineMedium),
+              IconButton(
+                onPressed: widget.onBack,
+                icon: Icon(Icons.arrow_back, color: widget.palette.accent),
+              ),
+              Text('Edytuj osobę', style: Theme.of(context).textTheme.headlineMedium),
             ],
           ),
           const SizedBox(height: 8),
-          _TextField(controller: _nameController, label: 'Nazwa miejsca', palette: widget.palette),
+          Text(
+            'Profil: ${widget.peer.name}',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
           const SizedBox(height: 16),
-          _CoordsBox(
-            latController: _latController,
-            lngController: _lngController,
-            onCopy: _copyCoords,
-            palette: widget.palette,
+          TextField(
+            controller: _nameController,
+            style: TextStyle(fontSize: 18, color: widget.palette.textPrimary),
+            decoration: InputDecoration(
+              labelText: 'Nazwa wyświetlana',
+              labelStyle: TextStyle(color: widget.palette.textSecondary),
+              border: const OutlineInputBorder(),
+            ),
           ),
           if (_error != null) ...[
             const SizedBox(height: 12),
@@ -1478,8 +1687,8 @@ class _EditFormState extends State<_EditForm> {
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: widget.onDelete,
-            icon: Icon(Icons.delete_outline, color: Colors.red.shade400),
-            label: Text('Usuń', style: TextStyle(color: Colors.red.shade400)),
+            icon: Icon(Icons.link_off, color: Colors.red.shade400),
+            label: Text('Odparuj', style: TextStyle(color: Colors.red.shade400)),
             style: OutlinedButton.styleFrom(side: BorderSide(color: Colors.red.shade400)),
           ),
         ],
@@ -1488,103 +1697,8 @@ class _EditFormState extends State<_EditForm> {
   }
 }
 
-class _CoordsBox extends StatelessWidget {
-  const _CoordsBox({
-    required this.latController,
-    required this.lngController,
-    required this.onCopy,
-    this.palette,
-    this.darkText = false,
-  });
-
-  final TextEditingController latController;
-  final TextEditingController lngController;
-  final VoidCallback onCopy;
-  final AppPalette? palette;
-  final bool darkText;
-
-  @override
-  Widget build(BuildContext context) {
-    final accent = palette?.accent ?? const Color(0xFF0D47A1);
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: accent, width: 2),
-        color: darkText ? const Color(0xFFF8F9FF) : palette?.surface,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('Współrzędne',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: accent)),
-          const SizedBox(height: 10),
-          _TextField(
-            controller: latController,
-            label: 'Szerokość',
-            palette: palette,
-            darkText: darkText,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[-0-9.,]'))],
-          ),
-          const SizedBox(height: 10),
-          _TextField(
-            controller: lngController,
-            label: 'Długość',
-            palette: palette,
-            darkText: darkText,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[-0-9.,]'))],
-          ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
-            onPressed: onCopy,
-            icon: Icon(Icons.copy, color: accent),
-            label: Text('Kopiuj współrzędne', style: TextStyle(color: accent, fontWeight: FontWeight.w600)),
-            style: OutlinedButton.styleFrom(side: BorderSide(color: accent)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TextField extends StatelessWidget {
-  const _TextField({
-    required this.controller,
-    required this.label,
-    this.palette,
-    this.darkText = false,
-    this.keyboardType,
-    this.inputFormatters,
-  });
-
-  final TextEditingController controller;
-  final String label;
-  final AppPalette? palette;
-  final bool darkText;
-  final TextInputType? keyboardType;
-  final List<TextInputFormatter>? inputFormatters;
-
-  @override
-  Widget build(BuildContext context) {
-    final textColor = darkText ? Colors.black : (palette?.textPrimary ?? Colors.black);
-    return TextField(
-      controller: controller,
-      keyboardType: keyboardType,
-      inputFormatters: inputFormatters,
-      style: TextStyle(fontSize: 18, color: textColor),
-      decoration: InputDecoration(
-        labelText: label,
-        labelStyle: TextStyle(color: darkText ? Colors.black54 : palette?.textSecondary),
-        border: const OutlineInputBorder(),
-      ),
-    );
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Panel informacji
+// Info
 // ---------------------------------------------------------------------------
 
 class _InfoContent extends StatelessWidget {
@@ -1598,6 +1712,7 @@ class _InfoContent extends StatelessWidget {
       listenable: settings,
       builder: (context, _) {
         final palette = settings.palette;
+        final body = Theme.of(context).textTheme.bodyLarge;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -1607,13 +1722,33 @@ class _InfoContent extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    Text('Jak działa nawigacja', style: Theme.of(context).textTheme.titleLarge),
+                    const SizedBox(height: 8),
                     Text(
-                      'Szadejkompas nasłuchuje sygnałów wysyłanych nieustannie przez '
-                      'satelity i kalkuluje swoje położenie na podstawie ich położenia '
-                      'oraz różnicy w czasie jaka ma miejsce pomiędzy nadaniem sygnału '
-                      'oraz jego odbiorem. Taką metodę określania współrzędnych w '
-                      'geometrii nazywamy trilateracją.',
-                      style: Theme.of(context).textTheme.bodyLarge,
+                      'Na liście wybierasz sparowaną osobę. Dopiero wtedy Szadejkompas '
+                      'włącza GPS i odpytuje serwer domowy o jej ostatnią znaną pozycję. '
+                      'Strzałka wskazuje kierunek, a dystans liczony jest na żywo.',
+                      style: body,
+                    ),
+                    const SizedBox(height: 20),
+                    Text('Parowanie kodami QR', style: Theme.of(context).textTheme.titleLarge),
+                    const SizedBox(height: 8),
+                    Text(
+                      'W zakładce „Dodaj” pokaż swój kod QR albo zeskanuj kod znajomego. '
+                      'Po skanowaniu druga osoba musi zaakceptować połączenie. '
+                      'Dopiero wtedy relacja działa dwustronnie — pojawiacie się u siebie na listach.',
+                      style: body,
+                    ),
+                    const SizedBox(height: 20),
+                    Text('Oszczędzanie baterii i danych', style: Theme.of(context).textTheme.titleLarge),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Transmisja pozycji i odpytywanie serwera działają wyłącznie '
+                      'przy otwartym widoku kompasu wybranej osoby. W menu Lista / Dodaj / Info '
+                      'oraz gdy aplikacja jest w tle GPS przechodzi w uśpienie. '
+                      'Częstotliwość odświeżania zależy od dystansu: powyżej 1 km co 60 s, '
+                      '100–1000 m co 10 s, poniżej 100 m co 5 s.',
+                      style: body,
                     ),
                     const SizedBox(height: 32),
                     Text('Motyw', style: Theme.of(context).textTheme.titleLarge),
@@ -1696,13 +1831,13 @@ class _ThemeOption extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Widok kompasu (w środkowym kontenerze)
+// Widok kompasu
 // ---------------------------------------------------------------------------
 
 class _CompassView extends StatelessWidget {
   const _CompassView({
     required this.palette,
-    required this.destination,
+    required this.peer,
     required this.errorMessage,
     required this.permissionGranted,
     required this.currentPosition,
@@ -1710,10 +1845,12 @@ class _CompassView extends StatelessWidget {
     required this.gpsSearchTimeout,
     required this.distance,
     required this.rotation,
+    required this.usingCachedLocation,
+    required this.locationFetchedAt,
   });
 
   final AppPalette palette;
-  final Destination destination;
+  final Peer peer;
   final String? errorMessage;
   final bool permissionGranted;
   final Position? currentPosition;
@@ -1721,6 +1858,8 @@ class _CompassView extends StatelessWidget {
   final bool gpsSearchTimeout;
   final double? distance;
   final double? rotation;
+  final bool usingCachedLocation;
+  final DateTime? locationFetchedAt;
 
   @override
   Widget build(BuildContext context) {
@@ -1739,7 +1878,17 @@ class _CompassView extends StatelessWidget {
       return _msg(Icons.explore, palette.accent, 'Kalibruję kompas...\nObróć telefon w kształcie ósemki.');
     }
 
-    if (distance != null && distance! <= arrivalRadiusMeters) {
+    if (distance == null) {
+      return _msg(
+        Icons.cloud_off,
+        palette.accent,
+        usingCachedLocation
+            ? 'Brak aktualnej pozycji osoby.\nOstatnia znana: ${_formatClock(locationFetchedAt)}'
+            : 'Pobieram pozycję osoby...',
+      );
+    }
+
+    if (distance! <= arrivalRadiusMeters) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -1760,8 +1909,18 @@ class _CompassView extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(destination.name,
-              textAlign: TextAlign.center, style: Theme.of(context).textTheme.titleLarge),
+          Text(
+            peer.displayName,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          if (usingCachedLocation && locationFetchedAt != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Ostatnia znana pozycja: ${_formatClock(locationFetchedAt)}',
+              style: TextStyle(color: Colors.orange.shade300, fontSize: 13),
+            ),
+          ],
           const SizedBox(height: 24),
           Transform.rotate(
             angle: (rotation ?? 0) * math.pi / 180,
@@ -1781,7 +1940,11 @@ class _CompassView extends StatelessWidget {
           children: [
             Icon(icon, size: 80, color: color),
             const SizedBox(height: 24),
-            Text(text, textAlign: TextAlign.center, style: TextStyle(fontSize: 22, color: palette.textPrimary)),
+            Text(
+              text,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 22, color: palette.textPrimary),
+            ),
           ],
         ),
       ),

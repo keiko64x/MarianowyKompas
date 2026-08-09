@@ -1,7 +1,7 @@
 name: szadejkompas
-description: Szadejkompas — offline nawigacja GPS dla E. Szadejko.
+description: Szadejkompas — radar osób peer-to-peer z nawigacją GPS w czasie rzeczywistym.
 publish_to: 'none'
-version: 2.3.1+10
+version: 3.0.0+11
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -12,6 +12,9 @@ dependencies:
   geolocator: ^13.0.2
   flutter_compass: ^0.8.1
   shared_preferences: ^2.3.5
+  http: ^1.2.2
+  mobile_scanner: ^6.0.2
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:
