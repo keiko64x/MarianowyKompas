@@ -1,7 +1,7 @@
 name: medicine_compass
 description: Medicine Compass — peer-to-peer people radar with real-time GPS navigation.
 publish_to: 'none'
-version: 1.0.0+12
+version: 1.0.1+13
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -13,7 +13,7 @@ dependencies:
   flutter_compass: ^0.8.1
   shared_preferences: ^2.3.5
   http: ^1.2.2
-  mobile_scanner: ^6.0.2
+  mobile_scanner: ^7.0.0
   qr_flutter: ^4.1.0
   permission_handler: ^11.3.1
 

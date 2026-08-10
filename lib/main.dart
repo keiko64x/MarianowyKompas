@@ -1565,36 +1565,51 @@ class QrScanScreen extends StatefulWidget {
   State<QrScanScreen> createState() => _QrScanScreenState();
 }
 
-class _QrScanScreenState extends State<QrScanScreen> {
-  MobileScannerController? _controller;
+class _QrScanScreenState extends State<QrScanScreen> with WidgetsBindingObserver {
+  late final MobileScannerController _controller;
+  StreamSubscription<Object?>? _barcodeSub;
   bool _handled = false;
+  bool _starting = false;
   _CameraPermissionState _permissionState = _CameraPermissionState.checking;
   String? _permissionError;
 
   @override
   void initState() {
     super.initState();
-    _requestCameraPermission();
+    WidgetsBinding.instance.addObserver(this);
+    _controller = MobileScannerController(
+      autoStart: false,
+      facing: CameraFacing.back,
+      detectionSpeed: DetectionSpeed.normal,
+      formats: const [BarcodeFormat.qrCode],
+    );
+    unawaited(_prepareCamera());
   }
 
-  Future<void> _requestCameraPermission() async {
+  Future<void> _prepareCamera() async {
     setState(() {
       _permissionState = _CameraPermissionState.checking;
       _permissionError = null;
     });
+
     try {
       var status = await Permission.camera.status;
       if (!status.isGranted) {
         status = await Permission.camera.request();
       }
       if (!mounted) return;
-      if (status.isGranted) {
-        _initController();
-      } else if (status.isPermanentlyDenied) {
+
+      if (status.isPermanentlyDenied) {
         setState(() => _permissionState = _CameraPermissionState.permanentlyDenied);
-      } else {
-        setState(() => _permissionState = _CameraPermissionState.denied);
+        return;
       }
+      if (!status.isGranted) {
+        setState(() => _permissionState = _CameraPermissionState.denied);
+        return;
+      }
+
+      setState(() => _permissionState = _CameraPermissionState.granted);
+      await _startScanner();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -1604,20 +1619,67 @@ class _QrScanScreenState extends State<QrScanScreen> {
     }
   }
 
-  void _initController() {
-    if (!mounted) return;
-    setState(() {
-      _controller = MobileScannerController(
-        detectionSpeed: DetectionSpeed.normal,
-        facing: CameraFacing.back,
-      );
-      _permissionState = _CameraPermissionState.granted;
-    });
+  Future<void> _startScanner() async {
+    if (!mounted || _starting || _handled) return;
+    _starting = true;
+    try {
+      await _barcodeSub?.cancel();
+      _barcodeSub = _controller.barcodes.listen(_onDetect);
+      // Wait one frame so the MobileScanner widget is attached.
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      if (!mounted || _handled) return;
+      await _controller.start();
+      if (mounted) {
+        setState(() {
+          _permissionState = _CameraPermissionState.granted;
+          _permissionError = null;
+        });
+      }
+    } on MobileScannerException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _permissionState = _CameraPermissionState.error;
+        _permissionError = e.errorDetails?.message ?? e.toString();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _permissionState = _CameraPermissionState.error;
+        _permissionError = e.toString();
+      });
+    } finally {
+      _starting = false;
+    }
+  }
+
+  Future<void> _stopScanner() async {
+    await _barcodeSub?.cancel();
+    _barcodeSub = null;
+    try {
+      await _controller.stop();
+    } catch (_) {}
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_permissionState != _CameraPermissionState.granted) return;
+    switch (state) {
+      case AppLifecycleState.resumed:
+        unawaited(_startScanner());
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        unawaited(_stopScanner());
+    }
   }
 
   @override
   void dispose() {
-    _controller?.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_barcodeSub?.cancel());
+    _barcodeSub = null;
+    unawaited(_controller.dispose());
     super.dispose();
   }
 
@@ -1629,63 +1691,16 @@ class _QrScanScreenState extends State<QrScanScreen> {
         .firstWhere((v) => v.trim().isNotEmpty, orElse: () => '');
     if (raw.isEmpty) return;
     _handled = true;
-    Navigator.of(context).pop(raw);
+    unawaited(_stopScanner());
+    if (mounted) Navigator.of(context).pop(raw);
   }
 
-  Widget _buildPermissionBody() {
-    final palette = widget.palette;
-    switch (_permissionState) {
-      case _CameraPermissionState.checking:
-        return Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(color: palette.accent),
-              const SizedBox(height: 16),
-              Text(
-                'Checking camera permission...',
-                style: TextStyle(color: palette.textPrimary, fontSize: 16),
-              ),
-            ],
-          ),
-        );
-      case _CameraPermissionState.denied:
-        return _permissionMessage(
-          icon: Icons.camera_alt_outlined,
-          title: 'Camera access needed',
-          message: 'Medicine Compass needs camera access to scan QR codes for pairing.',
-          actionLabel: 'Grant permission',
-          onAction: _requestCameraPermission,
-        );
-      case _CameraPermissionState.permanentlyDenied:
-        return _permissionMessage(
-          icon: Icons.no_photography_outlined,
-          title: 'Camera access denied',
-          message: 'Enable camera permission in your device settings to scan QR codes.',
-          actionLabel: 'Open settings',
-          onAction: () async {
-            await openAppSettings();
-          },
-        );
-      case _CameraPermissionState.error:
-        return _permissionMessage(
-          icon: Icons.error_outline,
-          title: 'Camera error',
-          message: _permissionError ?? 'Something went wrong while accessing the camera.',
-          actionLabel: 'Try again',
-          onAction: _requestCameraPermission,
-        );
-      case _CameraPermissionState.granted:
-        return const SizedBox.shrink();
-    }
-  }
-
-  Widget _permissionMessage({
+  Widget _buildMessageBody({
     required IconData icon,
     required String title,
     required String message,
-    required String actionLabel,
-    required VoidCallback onAction,
+    String? actionLabel,
+    VoidCallback? onAction,
   }) {
     final palette = widget.palette;
     return Center(
@@ -1711,27 +1726,95 @@ class _QrScanScreenState extends State<QrScanScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 16, color: palette.textSecondary),
             ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: onAction,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: palette.accent,
-                foregroundColor: palette.isDark ? Colors.black : Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+            if (actionLabel != null && onAction != null) ...[
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: onAction,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: palette.accent,
+                  foregroundColor: palette.isDark ? Colors.black : Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                ),
+                child: Text(actionLabel),
               ),
-              child: Text(actionLabel),
-            ),
+            ],
           ],
         ),
       ),
     );
   }
 
+  Widget _buildBody() {
+    switch (_permissionState) {
+      case _CameraPermissionState.checking:
+        return _buildMessageBody(
+          icon: Icons.hourglass_top,
+          title: 'Starting camera…',
+          message: 'Checking camera permission.',
+        );
+      case _CameraPermissionState.denied:
+        return _buildMessageBody(
+          icon: Icons.camera_alt_outlined,
+          title: 'Camera access needed',
+          message: 'Medicine Compass needs camera access to scan QR codes for pairing.',
+          actionLabel: 'Grant permission',
+          onAction: () => unawaited(_prepareCamera()),
+        );
+      case _CameraPermissionState.permanentlyDenied:
+        return _buildMessageBody(
+          icon: Icons.no_photography_outlined,
+          title: 'Camera access denied',
+          message: 'Enable camera permission in your device settings to scan QR codes.',
+          actionLabel: 'Open settings',
+          onAction: () => unawaited(openAppSettings()),
+        );
+      case _CameraPermissionState.error:
+        return _buildMessageBody(
+          icon: Icons.videocam_off,
+          title: 'Camera unavailable',
+          message: _permissionError ??
+              'Could not start the camera. Close other camera apps and try again.',
+          actionLabel: 'Try again',
+          onAction: () => unawaited(_prepareCamera()),
+        );
+      case _CameraPermissionState.granted:
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            MobileScanner(
+              controller: _controller,
+              errorBuilder: (context, error) {
+                return _buildMessageBody(
+                  icon: Icons.videocam_off,
+                  title: 'Camera unavailable',
+                  message: error.errorDetails?.message ??
+                      'Could not start the camera. Please try again.',
+                  actionLabel: 'Try again',
+                  onAction: () => unawaited(_prepareCamera()),
+                );
+              },
+            ),
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Container(
+                width: double.infinity,
+                color: Colors.black54,
+                padding: const EdgeInsets.all(16),
+                child: const Text(
+                  'Point the camera at your friend\'s QR code.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white, fontSize: 15),
+                ),
+              ),
+            ),
+          ],
+        );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = widget.palette;
-    final controller = _controller;
-
     return Scaffold(
       backgroundColor: palette.background,
       appBar: AppBar(
@@ -1739,60 +1822,7 @@ class _QrScanScreenState extends State<QrScanScreen> {
         foregroundColor: palette.textPrimary,
         title: const Text('Scan QR code'),
       ),
-      body: _permissionState != _CameraPermissionState.granted || controller == null
-          ? _buildPermissionBody()
-          : Stack(
-              fit: StackFit.expand,
-              children: [
-                MobileScanner(
-                  controller: controller,
-                  onDetect: _onDetect,
-                  errorBuilder: (context, error, child) {
-                    return Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.videocam_off, size: 64, color: palette.accent),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Camera unavailable',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w600,
-                                color: palette.textPrimary,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              error.errorDetails?.message ??
-                                  'Could not start the camera. Please try again.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(fontSize: 16, color: palette.textSecondary),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: Container(
-                    width: double.infinity,
-                    color: Colors.black54,
-                    padding: const EdgeInsets.all(16),
-                    child: const Text(
-                      'Point the camera at your friend\'s QR code.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white, fontSize: 15),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+      body: _buildBody(),
     );
   }
 }
