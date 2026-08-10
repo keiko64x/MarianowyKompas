@@ -27,7 +27,13 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Medicine Compass needs the camera to scan friend QR codes for pairing.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Medicine Compass needs your location to show direction and distance to a paired person.</string>
+	<string>Medicine Compass needs your location to share it with paired people and show direction.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Medicine Compass shares your location with paired people while the app is running in the background.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

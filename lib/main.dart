@@ -10,6 +10,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import 'models/peer.dart';
 import 'models/user_profile.dart';
+import 'services/location_share_service.dart';
 import 'services/network_service.dart';
 import 'services/profile_store.dart';
 import 'utils/polling.dart';
@@ -315,6 +316,7 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final ProfileStore _store = ProfileStore();
   final NetworkService _network = NetworkService();
+  late final LocationShareService _locationShare = LocationShareService(_network);
 
   _ScreenMode _mode = _ScreenMode.people;
   UserProfile? _profile;
@@ -335,7 +337,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   DateTime? _peerLocationFetchedAt;
   PeerLocation? _livePeerLocation;
 
-  StreamSubscription<Position>? _positionSubscription;
   StreamSubscription<CompassEvent>? _compassSubscription;
   Timer? _gpsSearchTimer;
   Timer? _pollTimer;
@@ -356,7 +357,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _enterIdleMode();
+    _stopCompassTracking();
+    unawaited(_locationShare.stop());
     _pendingTimer?.cancel();
     _network.dispose();
     super.dispose();
@@ -364,18 +366,27 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.detached) {
-      _enterIdleMode(keepMode: true);
-      _pendingTimer?.cancel();
-    } else if (state == AppLifecycleState.resumed) {
-      if (_isCompassActive && _compassPeer != null) {
-        _startCompassSession(_compassPeer!);
-      } else {
-        _startPendingWatcher();
-        _refreshPeers();
-      }
+    switch (state) {
+      case AppLifecycleState.resumed:
+        unawaited(_ensureLocationSharing());
+        if (_isCompassActive && _compassPeer != null) {
+          unawaited(_startCompassSession(_compassPeer!));
+        } else {
+          _startPendingWatcher();
+          unawaited(_refreshPeers());
+        }
+      case AppLifecycleState.inactive:
+        // Ignore — fires for transient system UI.
+        break;
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+        // Keep sharing GPS in background; only pause compass/peer polling.
+        _stopCompassTracking(keepCompassMode: true);
+        _pendingTimer?.cancel();
+      case AppLifecycleState.detached:
+        _stopCompassTracking();
+        unawaited(_locationShare.stop());
+        _pendingTimer?.cancel();
     }
   }
 
@@ -410,6 +421,34 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
     await _refreshPeers();
     _startPendingWatcher();
+    await _ensureLocationSharing();
+  }
+
+  Future<void> _ensureLocationSharing() async {
+    await _locationShare.start(
+      onPosition: (position) {
+        if (!mounted) return;
+        setState(() {
+          _currentPosition = position;
+          _lastKnownPosition = position;
+          _gpsStatusMessage = _locationShare.statusMessage;
+          if (_isCompassActive) {
+            _gpsSearchTimeout = false;
+          }
+        });
+        if (_isCompassActive) _cancelGpsSearchTimer();
+      },
+    );
+    if (!mounted) return;
+    if (_locationShare.lastPosition != null) {
+      setState(() {
+        _currentPosition = _locationShare.lastPosition;
+        _lastKnownPosition = _locationShare.lastPosition;
+        _gpsStatusMessage = _locationShare.statusMessage;
+      });
+    } else if (_locationShare.statusMessage != null) {
+      setState(() => _gpsStatusMessage = _locationShare.statusMessage);
+    }
   }
 
   Future<String> _defaultDeviceName() async {
@@ -498,7 +537,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   void _goToDefault() {
-    _enterIdleMode();
+    _stopCompassTracking();
     setState(() {
       _mode = _ScreenMode.people;
       _compassPeer = null;
@@ -510,7 +549,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _peerLocationFetchedAt = null;
     });
     _startPendingWatcher();
-    _refreshPeers();
+    unawaited(_ensureLocationSharing());
+    unawaited(_refreshPeers());
   }
 
   _MenuButton? get _activeMenuButton {
@@ -529,17 +569,16 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
   }
 
-  // --- Idle / Compass session ---
+  // --- Location share / Compass session ---
 
-  void _enterIdleMode({bool keepMode = false}) {
+  /// Stops peer polling + compass sensors. Does NOT stop background location share.
+  void _stopCompassTracking({bool keepCompassMode = false}) {
     _cancelGpsSearchTimer();
     _pollTimer?.cancel();
     _pollTimer = null;
-    _positionSubscription?.cancel();
-    _positionSubscription = null;
     _compassSubscription?.cancel();
     _compassSubscription = null;
-    if (!keepMode) {
+    if (!keepCompassMode) {
       _compassPermissionGranted = false;
       _deviceHeading = null;
     }
@@ -570,24 +609,17 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _startCompassSession(Peer peer) async {
-    _enterIdleMode(keepMode: true);
+    _stopCompassTracking(keepCompassMode: true);
+    await _ensureLocationSharing();
     _startGpsSearchTimer();
 
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
+    final ok = await _locationShare.ensurePermission();
+    if (!ok) {
       if (!mounted) return;
-      setState(() => _compassError = 'Turn on GPS location in your phone settings.');
-      return;
-    }
-
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      if (!mounted) return;
-      setState(() => _compassError = 'Location access denied.');
+      setState(() {
+        _compassError =
+            _locationShare.statusMessage ?? 'Location permission required.';
+      });
       return;
     }
 
@@ -595,30 +627,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     setState(() {
       _compassPermissionGranted = true;
       _compassError = null;
+      _currentPosition = _locationShare.lastPosition ?? _currentPosition;
+      _lastKnownPosition = _currentPosition ?? _lastKnownPosition;
+      _gpsStatusMessage = _locationShare.statusMessage;
     });
 
-    _positionSubscription = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.best,
-        distanceFilter: 1,
-      ),
-    ).listen(
-      (position) {
-        if (!mounted || !_isCompassActive) return;
-        setState(() {
-          _currentPosition = position;
-          _lastKnownPosition = position;
-          _gpsStatusMessage = null;
-          _gpsSearchTimeout = false;
-        });
-        _cancelGpsSearchTimer();
-      },
-      onError: (_) {
-        if (!mounted) return;
-        setState(() => _gpsStatusMessage = 'Could not read GPS position.');
-      },
-    );
-
+    _compassSubscription?.cancel();
     _compassSubscription = FlutterCompass.events?.listen(
       (event) {
         if (!mounted || !_isCompassActive) return;
@@ -631,6 +645,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       },
     );
 
+    await _locationShare.uploadNow();
     await _pollOnce(peer);
     _scheduleNextPoll(peer);
   }
@@ -648,20 +663,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _pollOnce(Peer peer) async {
-    final me = _currentPosition ?? _lastKnownPosition;
-    if (me != null) {
-      try {
-        await _network.updateLocation(
-          lat: me.latitude,
-          lng: me.longitude,
-          accuracy: me.accuracy,
-        );
-      } on NetworkException catch (e) {
-        if (mounted && e.offline) {
-          setState(() => _networkBanner = 'No signal — using last known position.');
-        }
-      }
-    }
+    await _locationShare.uploadNow();
 
     try {
       final loc = await _network.fetchLocation(peer.userId);
@@ -762,7 +764,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _goToDefault();
       return;
     }
-    _enterIdleMode();
+    _stopCompassTracking();
     setState(() {
       _editingPeer = null;
       _compassPeer = null;
@@ -777,9 +779,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           _mode = _ScreenMode.info;
       }
     });
+    unawaited(_ensureLocationSharing());
     _startPendingWatcher();
     if (button == _MenuButton.list || button == _MenuButton.edit) {
-      _refreshPeers();
+      unawaited(_refreshPeers());
     }
   }
 
@@ -911,9 +914,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 _buildBottomArea(),
                 _GpsBar(
                   palette: _palette,
-                  position: _isCompassActive ? _currentPosition : _lastKnownPosition,
+                  position: _currentPosition ?? _lastKnownPosition,
                   statusMessage: _gpsStatusMessage,
-                  idleHint: !_isCompassActive,
+                  sharingActive: _locationShare.isRunning,
                 ),
               ],
             ),
@@ -1268,13 +1271,13 @@ class _GpsBar extends StatelessWidget {
     required this.palette,
     required this.position,
     required this.statusMessage,
-    this.idleHint = false,
+    this.sharingActive = false,
   });
 
   final AppPalette palette;
   final Position? position;
   final String? statusMessage;
-  final bool idleHint;
+  final bool sharingActive;
 
   @override
   Widget build(BuildContext context) {
@@ -1282,10 +1285,11 @@ class _GpsBar extends StatelessWidget {
     if (statusMessage != null) {
       text = statusMessage!;
     } else if (position != null) {
+      final share = sharingActive ? ' · sharing' : '';
       text =
-          'Your position: ${position!.latitude.toStringAsFixed(6)}, ${position!.longitude.toStringAsFixed(6)}';
-    } else if (idleHint) {
-      text = 'GPS asleep — activates when you select someone from the list';
+          'Your position: ${position!.latitude.toStringAsFixed(6)}, ${position!.longitude.toStringAsFixed(6)}$share';
+    } else if (sharingActive) {
+      text = 'Sharing location in background…';
     } else {
       text = 'Searching for your GPS position...';
     }
@@ -1961,9 +1965,9 @@ class _InfoContent extends StatelessWidget {
                     Text('How navigation works', style: Theme.of(context).textTheme.titleLarge),
                     const SizedBox(height: 8),
                     Text(
-                      'Select a paired person from the list. Only then does Medicine Compass '
-                      'turn on GPS and poll the home server for their last known position. '
-                      'The arrow shows direction, and distance is calculated live.',
+                      'While Medicine Compass is running — even in the background — '
+                      'your phone uploads your GPS so paired friends can find you. '
+                      'Open someone from the list to see a live arrow and distance to them.',
                       style: body,
                     ),
                     const SizedBox(height: 20),
@@ -1976,14 +1980,14 @@ class _InfoContent extends StatelessWidget {
                       style: body,
                     ),
                     const SizedBox(height: 20),
-                    Text('Battery and data saving', style: Theme.of(context).textTheme.titleLarge),
+                    Text('Background sharing', style: Theme.of(context).textTheme.titleLarge),
                     const SizedBox(height: 8),
                     Text(
-                      'Location transmission and server polling run only '
-                      'while the compass view for the selected person is open. '
-                      'In List / Add / Info menus, and when the app is in the background, GPS goes to sleep. '
-                      'Refresh frequency depends on distance: under 100 m every 2 s, '
-                      '100–1000 m every 5 s, over 1000 m every 30 s.',
+                      'Your location is shared while the app process is alive (including when you switch apps). '
+                      'Android shows a persistent notification so GPS can keep running. '
+                      'Polling the other person happens only in the compass view: '
+                      'under 100 m every 2 s, 100–1000 m every 5 s, over 1000 m every 30 s. '
+                      'Force-closing the app stops sharing.',
                       style: body,
                     ),
                     const SizedBox(height: 32),
