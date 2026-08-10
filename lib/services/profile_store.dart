@@ -5,10 +5,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/peer.dart';
 import '../models/user_profile.dart';
 
-const _profileKey = 'kompas_profile_v1';
-const _peersCacheKey = 'kompas_peers_cache_v1';
-const _themeKey = 'app_theme';
-const _skipWelcomeKey = 'skip_welcome';
+const _profileKey = 'medicine_compass_profile_v1';
+const _peersCacheKey = 'medicine_compass_peers_cache_v1';
+const _themeKey = 'medicine_compass_theme';
+const _skipWelcomeKey = 'medicine_compass_skip_welcome';
 
 class ProfileStore {
   Future<UserProfile?> loadProfile() async {

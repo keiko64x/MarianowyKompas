@@ -1,7 +1,7 @@
-name: szadejkompas
-description: Szadejkompas — radar osób peer-to-peer z nawigacją GPS w czasie rzeczywistym.
+name: medicine_compass
+description: Medicine Compass — peer-to-peer people radar with real-time GPS navigation.
 publish_to: 'none'
-version: 3.0.0+11
+version: 1.0.0+12
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -15,6 +15,7 @@ dependencies:
   http: ^1.2.2
   mobile_scanner: ^6.0.2
   qr_flutter: ^4.1.0
+  permission_handler: ^11.3.1
 
 dev_dependencies:
   flutter_test:
@@ -24,10 +25,11 @@ dev_dependencies:
 
 flutter_launcher_icons:
   android: true
-  ios: false
+  ios: true
   image_path: ikony/android/playstore-icon.png
-  adaptive_icon_background: "#12141C"
+  adaptive_icon_background: "#1A2E1F"
   adaptive_icon_foreground: ikony/android/playstore-icon.png
+  remove_alpha_ios: true
 
 flutter:
   uses-material-design: true

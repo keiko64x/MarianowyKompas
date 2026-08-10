@@ -1,4 +1,4 @@
-package pl.marianowy.marianowy_kompas
+package net.szadejko.medicine_compass
 
 import io.flutter.embedding.android.FlutterActivity
 

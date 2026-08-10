@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-/// Haversine — dystans w metrach między dwoma punktami GPS.
+/// Haversine distance in meters between two GPS points.
 double haversineMeters(
   double lat1,
   double lon1,
@@ -21,10 +21,10 @@ double haversineMeters(
 
 double _toRad(double deg) => deg * math.pi / 180;
 
-/// Interwał odświeżania pozycji w zależności od dystansu.
+/// Polling interval based on distance (Medicine Compass).
 Duration pollingIntervalForDistance(double? meters) {
-  if (meters == null) return const Duration(seconds: 10);
-  if (meters > 1000) return const Duration(seconds: 60);
-  if (meters >= 100) return const Duration(seconds: 10);
-  return const Duration(seconds: 5);
+  if (meters == null) return const Duration(seconds: 5);
+  if (meters > 1000) return const Duration(seconds: 30);
+  if (meters >= 100) return const Duration(seconds: 5);
+  return const Duration(seconds: 2);
 }

@@ -1,25 +1,31 @@
-# Szadejkompas
+# Medicine Compass
 
-Radar osób peer-to-peer z nawigacją GPS w czasie rzeczywistym.
+Peer-to-peer people radar with real-time GPS navigation.
 
-Aplikacja Flutter komunikuje się z domowym serwerem Node.js:
+Home server API: `https://server.szadejko.net/api/kompas`
 
-`https://server.szadejko.net/api/kompas`
+## Features
 
-## Zakładki
+- **List** — paired people and last-activity status
+- **Add** — your QR code + QR scanner (mutual pairing)
+- **Edit** — display name / unpair
+- **Info** — how it works + theme
 
-- **Lista** — sparowane osoby i status ostatniej aktywności
-- **Dodaj** — Twój kod QR + skaner QR (dwustronne parowanie)
-- **Edytuj** — zmiana nazwy wyświetlanej / odparowanie
-- **Info** — opis mechaniki i motyw
+GPS and server polling start only in the compass view for a selected person.
 
-GPS oraz odpytywanie serwera włączają się **dopiero** po wejściu w widok kompasu wybranej osoby. Interwał zależy od dystansu (Haversine): `>1 km` → 60 s, `100–1000 m` → 10 s, `<100 m` → 5 s.
+Polling by distance:
 
-## Budowanie APK
+- under 100 m → every 2 s
+- 100–1000 m → every 5 s
+- over 1000 m → every 30 s
+
+## Build
 
 ```bash
 flutter pub get
-flutter build apk --target-platform android-arm64
+dart run flutter_launcher_icons
+flutter build apk --release --target-platform android-arm64
+flutter build ios --release --no-codesign
 ```
 
-Moduły serwera: katalog [`home-server/`](home-server/).
+Server modules: [`home-server/`](home-server/).

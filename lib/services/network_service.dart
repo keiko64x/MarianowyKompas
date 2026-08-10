@@ -17,7 +17,7 @@ class NetworkException implements Exception {
   String toString() => message;
 }
 
-/// Klient REST dla domowego serwera Node.js (Szadejkompas).
+/// REST client for the home Node.js server (Medicine Compass).
 class NetworkService {
   NetworkService({
     this.baseUrl = 'https://server.szadejko.net/api/kompas',

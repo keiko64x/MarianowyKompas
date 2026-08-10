@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'models/peer.dart';
@@ -12,9 +13,10 @@ import 'models/user_profile.dart';
 import 'services/network_service.dart';
 import 'services/profile_store.dart';
 import 'utils/polling.dart';
+import 'utils/spirit_names.dart';
 
 // ---------------------------------------------------------------------------
-// Stałe
+// Constants
 // ---------------------------------------------------------------------------
 
 const double arrivalRadiusMeters = 5.0;
@@ -27,12 +29,12 @@ const Duration _kPendingPollInterval = Duration(seconds: 20);
 String _formatDistanceValue(double? meters) {
   if (meters == null) return '...';
   if (meters <= 1000) return '${meters.round()}';
-  return (meters / 1000).toStringAsFixed(2).replaceAll('.', ',');
+  return (meters / 1000).toStringAsFixed(2);
 }
 
 String _formatDistanceUnit(double? meters) {
   if (meters == null) return '';
-  return meters <= 1000 ? 'metrów' : 'km';
+  return meters <= 1000 ? 'meters' : 'km';
 }
 
 String _formatClock(DateTime? time) {
@@ -44,7 +46,7 @@ String _formatClock(DateTime? time) {
 }
 
 // ---------------------------------------------------------------------------
-// Motyw
+// Theme
 // ---------------------------------------------------------------------------
 
 enum AppThemeMode { dark, light }
@@ -56,17 +58,17 @@ class AppPalette {
 
   bool get isDark => mode == AppThemeMode.dark;
 
-  Color get background => isDark ? const Color(0xFF12141C) : const Color(0xFFF5F5F5);
-  Color get containerBackground => isDark ? const Color(0xFF1E2230) : Colors.white;
-  Color get surface => isDark ? const Color(0xFF252A3A) : const Color(0xFFF2F2F2);
-  Color get surfaceBorder => isDark ? const Color(0xFF2E3448) : const Color(0xFFD0D0D0);
-  Color get textPrimary => isDark ? Colors.white : Colors.black;
-  Color get textSecondary => isDark ? const Color(0xFFB8C0D4) : Colors.black87;
-  Color get accent => isDark ? const Color(0xFF7EC8FF) : const Color(0xFF0D47A1);
-  Color get arrow => isDark ? const Color(0xFF7EC8FF) : const Color(0xFF0D47A1);
-  Color get buttonBackground => isDark ? const Color(0xFF2A3145) : const Color(0xFFE8E8E8);
-  Color get buttonForeground => isDark ? Colors.white : Colors.black;
-  Color get gpsBar => isDark ? const Color(0xFF1A1F2E) : const Color(0xFFE0E0E0);
+  Color get background => isDark ? const Color(0xFF1A2E1F) : const Color(0xFFF4F0E6);
+  Color get containerBackground => isDark ? const Color(0xFF243528) : Colors.white;
+  Color get surface => isDark ? const Color(0xFF2E4033) : const Color(0xFFEBE4D6);
+  Color get surfaceBorder => isDark ? const Color(0xFF3D5442) : const Color(0xFFC4A882);
+  Color get textPrimary => isDark ? Colors.white : const Color(0xFF2A1F14);
+  Color get textSecondary => isDark ? const Color(0xFFC9D5C4) : const Color(0xFF5C4A3A);
+  Color get accent => isDark ? const Color(0xFF8FAE8B) : const Color(0xFF2F5D3A);
+  Color get arrow => isDark ? const Color(0xFF8FAE8B) : const Color(0xFF2F5D3A);
+  Color get buttonBackground => isDark ? const Color(0xFF3A4F3C) : const Color(0xFFE0D5C2);
+  Color get buttonForeground => isDark ? Colors.white : const Color(0xFF2A1F14);
+  Color get gpsBar => isDark ? const Color(0xFF15251A) : const Color(0xFFE8DFD0);
   Color get success => Colors.green.shade500;
 
   ThemeData toThemeData() {
@@ -105,18 +107,18 @@ class AppSettings extends ChangeNotifier {
 }
 
 // ---------------------------------------------------------------------------
-// Aplikacja
+// Application
 // ---------------------------------------------------------------------------
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final settings = AppSettings();
   await settings.load();
-  runApp(SzadejkompasApp(settings: settings));
+  runApp(MedicineCompassApp(settings: settings));
 }
 
-class SzadejkompasApp extends StatelessWidget {
-  const SzadejkompasApp({super.key, required this.settings});
+class MedicineCompassApp extends StatelessWidget {
+  const MedicineCompassApp({super.key, required this.settings});
 
   final AppSettings settings;
 
@@ -126,7 +128,7 @@ class SzadejkompasApp extends StatelessWidget {
       listenable: settings,
       builder: (context, _) {
         return MaterialApp(
-          title: 'Szadejkompas',
+          title: 'Medicine Compass',
           debugShowCheckedModeBanner: false,
           theme: settings.palette.toThemeData(),
           home: _AppRoot(settings: settings),
@@ -216,9 +218,9 @@ class _WelcomeScreenState extends State<_WelcomeScreen> {
                   Image.asset(_logoAsset, height: _kWelcomeLogoHeight, fit: BoxFit.contain),
                   const SizedBox(height: 32),
                   Text(
-                    'Szadejkompas to radar osób w czasie rzeczywistym. '
-                    'Sparuj znajomego kodem QR, a po wybraniu go z listy '
-                    'nawiguj strzałką do jego aktualnej pozycji GPS.',
+                    'Medicine Compass is a real-time people radar. '
+                    'Pair with someone using a QR code, then select them from the list '
+                    'to navigate with an arrow to their current GPS position.',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
@@ -231,7 +233,7 @@ class _WelcomeScreenState extends State<_WelcomeScreen> {
                           height: _kSquareButtonSize,
                           child: _SquareMenuButton(
                             palette: palette,
-                            label: 'Rozumiem',
+                            label: 'Got it',
                             icon: Icons.check,
                             onPressed: () => widget.onContinue(_dontShowAgain),
                           ),
@@ -251,7 +253,7 @@ class _WelcomeScreenState extends State<_WelcomeScreen> {
                               ),
                               Expanded(
                                 child: Text(
-                                  'Nie pokazuj ponownie',
+                                  "Don't show again",
                                   style: TextStyle(
                                     fontSize: 13,
                                     color: palette.textPrimary,
@@ -276,7 +278,7 @@ class _WelcomeScreenState extends State<_WelcomeScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// Tryby ekranu
+// Screen modes
 // ---------------------------------------------------------------------------
 
 enum _ScreenMode { people, add, editList, editItem, info, compass }
@@ -284,7 +286,7 @@ enum _ScreenMode { people, add, editList, editItem, info, compass }
 enum _MenuButton { list, add, edit, info }
 
 // ---------------------------------------------------------------------------
-// Główny ekran
+// Main screen
 // ---------------------------------------------------------------------------
 
 class MainScreen extends StatefulWidget {
@@ -378,7 +380,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           _bootstrapping = false;
           _networkBanner = e is NetworkException
               ? e.message
-              : 'Nie udało się zarejestrować profilu. Sprawdź sieć.';
+              : 'Could not register profile. Check your network.';
         });
         return;
       }
@@ -397,9 +399,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Future<String> _defaultDeviceName() async {
-    // Prosta, czytelna nazwa profilu — użytkownik może ją zmienić później.
-    final stamp = DateTime.now().millisecondsSinceEpoch.toString().substring(7);
-    return 'Telefon $stamp';
+    return randomSpiritProfileName();
   }
 
   Future<void> _refreshPeers() async {
@@ -416,7 +416,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       setState(() {
         _networkBanner = e.offline
-            ? 'Brak zasięgu — pokazuję ostatnią znaną listę.'
+            ? 'No signal — showing last known list.'
             : e.message;
       });
     }
@@ -445,20 +445,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           barrierDismissible: false,
           builder: (context) => AlertDialog(
             backgroundColor: _palette.containerBackground,
-            title: Text('Prośba o parowanie', style: TextStyle(color: _palette.textPrimary)),
+            title: Text('Pairing request', style: TextStyle(color: _palette.textPrimary)),
             content: Text(
-              '${request.fromName ?? 'Ktoś'} chce się z Tobą sparować. '
-              'Po akceptacji będziecie widoczni u siebie na liście.',
+              '${request.fromName ?? 'Someone'} wants to pair with you. '
+              'After accepting, you will both appear on each other\'s list.',
               style: TextStyle(color: _palette.textPrimary),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
-                child: Text('Odrzuć', style: TextStyle(color: Colors.red.shade400)),
+                child: Text('Decline', style: TextStyle(color: Colors.red.shade400)),
               ),
               TextButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: Text('Akceptuj', style: TextStyle(color: _palette.accent)),
+                child: Text('Accept', style: TextStyle(color: _palette.accent)),
               ),
             ],
           ),
@@ -479,7 +479,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         }
       }
     } catch (_) {
-      // ciche — pending nie blokuje UI
+      // silent — pending polling must not block UI
     }
   }
 
@@ -562,7 +562,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       if (!mounted) return;
-      setState(() => _compassError = 'Włącz lokalizację GPS w ustawieniach telefonu.');
+      setState(() => _compassError = 'Turn on GPS location in your phone settings.');
       return;
     }
 
@@ -573,7 +573,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
       if (!mounted) return;
-      setState(() => _compassError = 'Brak dostępu do lokalizacji.');
+      setState(() => _compassError = 'Location access denied.');
       return;
     }
 
@@ -601,7 +601,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       },
       onError: (_) {
         if (!mounted) return;
-        setState(() => _gpsStatusMessage = 'Nie udało się odczytać pozycji GPS.');
+        setState(() => _gpsStatusMessage = 'Could not read GPS position.');
       },
     );
 
@@ -613,7 +613,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       },
       onError: (_) {
         if (!mounted) return;
-        setState(() => _compassError = 'Nie udało się odczytać kompasu.');
+        setState(() => _compassError = 'Could not read compass.');
       },
     );
 
@@ -644,7 +644,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         );
       } on NetworkException catch (e) {
         if (mounted && e.offline) {
-          setState(() => _networkBanner = 'Brak zasięgu — używam ostatniej znanej pozycji.');
+          setState(() => _networkBanner = 'No signal — using last known position.');
         }
       }
     }
@@ -682,7 +682,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         setState(() {
           _usingCachedPeerLocation = true;
           _networkBanner = e.offline
-              ? 'Brak zasięgu — ostatnia znana pozycja ${_formatClock(_peerLocationFetchedAt ?? peer.cachedAt)}'
+              ? 'No signal — last known position ${_formatClock(_peerLocationFetchedAt ?? peer.cachedAt)}'
               : e.message;
           if (_livePeerLocation == null &&
               peer.cachedLatitude != null &&
@@ -779,7 +779,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Wysłano prośbę o parowanie. Poczekaj na akceptację.'),
+          content: Text('Pairing request sent. Waiting for acceptance.'),
         ),
       );
       await _refreshPeers();
@@ -798,7 +798,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       setState(() => _profile = updated);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Zapisano nazwę profilu')),
+        const SnackBar(content: Text('Profile name saved')),
       );
     } on NetworkException catch (e) {
       final local = _profile!.copyWith(name: clean);
@@ -807,7 +807,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       setState(() => _profile = local);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Zapisano lokalnie (${e.message})')),
+        SnackBar(content: Text('Saved locally (${e.message})')),
       );
     }
   }
@@ -832,17 +832,17 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: _palette.containerBackground,
-        title: Text('Odparować?', style: TextStyle(color: _palette.textPrimary)),
+        title: Text('Unpair?', style: TextStyle(color: _palette.textPrimary)),
         content: Text(
-          'Czy na pewno usunąć relację z „${peer.displayName}"? '
-          'Znikniecie u siebie z list.',
+          'Remove the connection with "${peer.displayName}"? '
+          'You will disappear from each other\'s lists.',
           style: TextStyle(color: _palette.textPrimary),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Anuluj')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text('Odparuj', style: TextStyle(color: Colors.red.shade400)),
+            child: Text('Unpair', style: TextStyle(color: Colors.red.shade400)),
           ),
         ],
       ),
@@ -1014,11 +1014,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
       child: Row(
         children: [
-          _buildMenuButton(_MenuButton.list, 'Lista', Icons.list),
+          _buildMenuButton(_MenuButton.list, 'List', Icons.list),
           const SizedBox(width: 8),
-          _buildMenuButton(_MenuButton.add, 'Dodaj', Icons.qr_code_2),
+          _buildMenuButton(_MenuButton.add, 'Add', Icons.qr_code_2),
           const SizedBox(width: 8),
-          _buildMenuButton(_MenuButton.edit, 'Edytuj', Icons.edit),
+          _buildMenuButton(_MenuButton.edit, 'Edit', Icons.edit),
           const SizedBox(width: 8),
           _buildMenuButton(_MenuButton.info, 'Info', Icons.info_outline),
         ],
@@ -1062,7 +1062,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             flex: 3,
             child: arrived
                 ? Text(
-                    'Osiągnięto cel, rozejrzyj się.',
+                    'Destination reached — look around.',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -1074,7 +1074,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            'Dystans',
+                            'Distance',
                             style: TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.w600,
@@ -1103,8 +1103,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       )
                     : Text(
                         _gpsSearchTimeout
-                            ? 'zacznij iść, aby pomóc w nawiązaniu połączenia GPS'
-                            : 'kalkulowanie sygnałów z satelitów',
+                            ? 'Start walking to help establish a GPS connection'
+                            : 'Calculating satellite signals',
                         style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
@@ -1120,7 +1120,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 height: _kSquareButtonSize,
                 child: _SquareMenuButton(
                   palette: _palette,
-                  label: 'Cofnij',
+                  label: 'Back',
                   icon: Icons.keyboard_arrow_down,
                   labelAboveIcon: true,
                   onPressed: _goToDefault,
@@ -1135,7 +1135,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 }
 
 // ---------------------------------------------------------------------------
-// Widgety wspólne
+// Shared widgets
 // ---------------------------------------------------------------------------
 
 class _KeyboardDismissButton extends StatelessWidget {
@@ -1161,8 +1161,8 @@ class _KeyboardDismissButton extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text('schowaj', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, height: 1.1, color: fg)),
-                  Text('klawiaturę', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, height: 1.1, color: fg)),
+                  Text('hide', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, height: 1.1, color: fg)),
+                  Text('keyboard', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, height: 1.1, color: fg)),
                 ],
               ),
               const SizedBox(width: 10),
@@ -1255,11 +1255,11 @@ class _GpsBar extends StatelessWidget {
       text = statusMessage!;
     } else if (position != null) {
       text =
-          'Twoja pozycja: ${position!.latitude.toStringAsFixed(6)}, ${position!.longitude.toStringAsFixed(6)}';
+          'Your position: ${position!.latitude.toStringAsFixed(6)}, ${position!.longitude.toStringAsFixed(6)}';
     } else if (idleHint) {
-      text = 'GPS uśpiony — włączy się po wyborze osoby z listy';
+      text = 'GPS asleep — activates when you select someone from the list';
     } else {
-      text = 'Szukam Twojej pozycji GPS...';
+      text = 'Searching for your GPS position...';
     }
 
     return Container(
@@ -1272,7 +1272,7 @@ class _GpsBar extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Lista osób
+// People list
 // ---------------------------------------------------------------------------
 
 class _PeopleListView extends StatelessWidget {
@@ -1305,7 +1305,7 @@ class _PeopleListView extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  showEditControls ? 'Edytuj osoby' : 'Osoby',
+                  showEditControls ? 'Edit people' : 'People',
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
@@ -1327,7 +1327,7 @@ class _PeopleListView extends StatelessWidget {
                   child: Padding(
                     padding: const EdgeInsets.all(24),
                     child: Text(
-                      'Brak sparowanych osób.\nPrzejdź do „Dodaj” i zeskanuj kod QR.',
+                      'No paired people yet.\nGo to Add and scan a QR code.',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.headlineMedium,
                     ),
@@ -1398,7 +1398,7 @@ class _PeopleListView extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Zakładka parowania QR
+// QR pairing tab
 // ---------------------------------------------------------------------------
 
 class _PairingTab extends StatefulWidget {
@@ -1450,10 +1450,10 @@ class _PairingTabState extends State<_PairingTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Twój kod QR', style: Theme.of(context).textTheme.headlineMedium),
+          Text('Your QR code', style: Theme.of(context).textTheme.headlineMedium),
           const SizedBox(height: 8),
           Text(
-            'Pokaż ten kod drugiej osobie, aby Was sparować.',
+            'Show this code to another person to pair with them.',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 12),
@@ -1461,7 +1461,7 @@ class _PairingTabState extends State<_PairingTab> {
             controller: _nameController,
             style: TextStyle(color: widget.palette.textPrimary, fontSize: 18),
             decoration: InputDecoration(
-              labelText: 'Nazwa profilu',
+              labelText: 'Profile name',
               labelStyle: TextStyle(color: widget.palette.textSecondary),
               border: const OutlineInputBorder(),
               suffixIcon: IconButton(
@@ -1503,17 +1503,17 @@ class _PairingTabState extends State<_PairingTab> {
             ),
           ],
           const SizedBox(height: 28),
-          Text('Skanuj kod QR', style: Theme.of(context).textTheme.headlineMedium),
+          Text('Scan QR code', style: Theme.of(context).textTheme.headlineMedium),
           const SizedBox(height: 8),
           Text(
-            'Zeskanuj kod znajomego — wyślemy prośbę o dwustronne parowanie.',
+            'Scan a friend\'s code — we will send a two-way pairing request.',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
           ElevatedButton.icon(
             onPressed: widget.onScan,
             icon: const Icon(Icons.qr_code_scanner),
-            label: const Text('Skanuj kod QR', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            label: const Text('Scan QR code', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             style: ElevatedButton.styleFrom(
               backgroundColor: widget.palette.accent,
               foregroundColor: widget.palette.isDark ? Colors.black : Colors.white,
@@ -1526,6 +1526,8 @@ class _PairingTabState extends State<_PairingTab> {
   }
 }
 
+enum _CameraPermissionState { checking, denied, permanentlyDenied, granted, error }
+
 class QrScanScreen extends StatefulWidget {
   const QrScanScreen({super.key, required this.palette});
 
@@ -1536,15 +1538,58 @@ class QrScanScreen extends StatefulWidget {
 }
 
 class _QrScanScreenState extends State<QrScanScreen> {
-  final MobileScannerController _controller = MobileScannerController(
-    detectionSpeed: DetectionSpeed.normal,
-    facing: CameraFacing.back,
-  );
+  MobileScannerController? _controller;
   bool _handled = false;
+  _CameraPermissionState _permissionState = _CameraPermissionState.checking;
+  String? _permissionError;
+
+  @override
+  void initState() {
+    super.initState();
+    _requestCameraPermission();
+  }
+
+  Future<void> _requestCameraPermission() async {
+    setState(() {
+      _permissionState = _CameraPermissionState.checking;
+      _permissionError = null;
+    });
+    try {
+      var status = await Permission.camera.status;
+      if (!status.isGranted) {
+        status = await Permission.camera.request();
+      }
+      if (!mounted) return;
+      if (status.isGranted) {
+        _initController();
+      } else if (status.isPermanentlyDenied) {
+        setState(() => _permissionState = _CameraPermissionState.permanentlyDenied);
+      } else {
+        setState(() => _permissionState = _CameraPermissionState.denied);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _permissionState = _CameraPermissionState.error;
+        _permissionError = e.toString();
+      });
+    }
+  }
+
+  void _initController() {
+    if (!mounted) return;
+    setState(() {
+      _controller = MobileScannerController(
+        detectionSpeed: DetectionSpeed.normal,
+        facing: CameraFacing.back,
+      );
+      _permissionState = _CameraPermissionState.granted;
+    });
+  }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controller?.dispose();
     super.dispose();
   }
 
@@ -1559,40 +1604,173 @@ class _QrScanScreenState extends State<QrScanScreen> {
     Navigator.of(context).pop(raw);
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: widget.palette.background,
-        title: const Text('Skanuj kod QR'),
-      ),
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          MobileScanner(controller: _controller, onDetect: _onDetect),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Container(
-              width: double.infinity,
-              color: Colors.black54,
-              padding: const EdgeInsets.all(16),
-              child: const Text(
-                'Skieruj aparat na kod QR znajomego. '
-                'Przy pierwszym użyciu zezwól na dostęp do kamery.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white, fontSize: 15),
+  Widget _buildPermissionBody() {
+    final palette = widget.palette;
+    switch (_permissionState) {
+      case _CameraPermissionState.checking:
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: palette.accent),
+              const SizedBox(height: 16),
+              Text(
+                'Checking camera permission...',
+                style: TextStyle(color: palette.textPrimary, fontSize: 16),
+              ),
+            ],
+          ),
+        );
+      case _CameraPermissionState.denied:
+        return _permissionMessage(
+          icon: Icons.camera_alt_outlined,
+          title: 'Camera access needed',
+          message: 'Medicine Compass needs camera access to scan QR codes for pairing.',
+          actionLabel: 'Grant permission',
+          onAction: _requestCameraPermission,
+        );
+      case _CameraPermissionState.permanentlyDenied:
+        return _permissionMessage(
+          icon: Icons.no_photography_outlined,
+          title: 'Camera access denied',
+          message: 'Enable camera permission in your device settings to scan QR codes.',
+          actionLabel: 'Open settings',
+          onAction: () async {
+            await openAppSettings();
+          },
+        );
+      case _CameraPermissionState.error:
+        return _permissionMessage(
+          icon: Icons.error_outline,
+          title: 'Camera error',
+          message: _permissionError ?? 'Something went wrong while accessing the camera.',
+          actionLabel: 'Try again',
+          onAction: _requestCameraPermission,
+        );
+      case _CameraPermissionState.granted:
+        return const SizedBox.shrink();
+    }
+  }
+
+  Widget _permissionMessage({
+    required IconData icon,
+    required String title,
+    required String message,
+    required String actionLabel,
+    required VoidCallback onAction,
+  }) {
+    final palette = widget.palette;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 64, color: palette.accent),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: palette.textPrimary,
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, color: palette.textSecondary),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: onAction,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: palette.accent,
+                foregroundColor: palette.isDark ? Colors.black : Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              ),
+              child: Text(actionLabel),
+            ),
+          ],
+        ),
       ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = widget.palette;
+    final controller = _controller;
+
+    return Scaffold(
+      backgroundColor: palette.background,
+      appBar: AppBar(
+        backgroundColor: palette.background,
+        foregroundColor: palette.textPrimary,
+        title: const Text('Scan QR code'),
+      ),
+      body: _permissionState != _CameraPermissionState.granted || controller == null
+          ? _buildPermissionBody()
+          : Stack(
+              fit: StackFit.expand,
+              children: [
+                MobileScanner(
+                  controller: controller,
+                  onDetect: _onDetect,
+                  errorBuilder: (context, error, child) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.videocam_off, size: 64, color: palette.accent),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Camera unavailable',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w600,
+                                color: palette.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              error.errorDetails?.message ??
+                                  'Could not start the camera. Please try again.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontSize: 16, color: palette.textSecondary),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Container(
+                    width: double.infinity,
+                    color: Colors.black54,
+                    padding: const EdgeInsets.all(16),
+                    child: const Text(
+                      'Point the camera at your friend\'s QR code.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white, fontSize: 15),
+                    ),
+                  ),
+                ),
+              ],
+            ),
     );
   }
 }
 
 // ---------------------------------------------------------------------------
-// Edycja osoby
+// Edit person
 // ---------------------------------------------------------------------------
 
 class _EditPeerForm extends StatefulWidget {
@@ -1633,7 +1811,7 @@ class _EditPeerFormState extends State<_EditPeerForm> {
   void _save() {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
-      setState(() => _error = 'Podaj nazwę wyświetlaną.');
+      setState(() => _error = 'Enter a display name.');
       return;
     }
     widget.onSave(name);
@@ -1652,12 +1830,12 @@ class _EditPeerFormState extends State<_EditPeerForm> {
                 onPressed: widget.onBack,
                 icon: Icon(Icons.arrow_back, color: widget.palette.accent),
               ),
-              Text('Edytuj osobę', style: Theme.of(context).textTheme.headlineMedium),
+              Text('Edit person', style: Theme.of(context).textTheme.headlineMedium),
             ],
           ),
           const SizedBox(height: 8),
           Text(
-            'Profil: ${widget.peer.name}',
+            'Profile: ${widget.peer.name}',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
@@ -1665,7 +1843,7 @@ class _EditPeerFormState extends State<_EditPeerForm> {
             controller: _nameController,
             style: TextStyle(fontSize: 18, color: widget.palette.textPrimary),
             decoration: InputDecoration(
-              labelText: 'Nazwa wyświetlana',
+              labelText: 'Display name',
               labelStyle: TextStyle(color: widget.palette.textSecondary),
               border: const OutlineInputBorder(),
             ),
@@ -1682,13 +1860,13 @@ class _EditPeerFormState extends State<_EditPeerForm> {
               foregroundColor: widget.palette.isDark ? Colors.black : Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
             ),
-            child: const Text('Zapisz zmiany', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            child: const Text('Save changes', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: widget.onDelete,
             icon: Icon(Icons.link_off, color: Colors.red.shade400),
-            label: Text('Odparuj', style: TextStyle(color: Colors.red.shade400)),
+            label: Text('Unpair', style: TextStyle(color: Colors.red.shade400)),
             style: OutlinedButton.styleFrom(side: BorderSide(color: Colors.red.shade400)),
           ),
         ],
@@ -1722,47 +1900,47 @@ class _InfoContent extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text('Jak działa nawigacja', style: Theme.of(context).textTheme.titleLarge),
+                    Text('How navigation works', style: Theme.of(context).textTheme.titleLarge),
                     const SizedBox(height: 8),
                     Text(
-                      'Na liście wybierasz sparowaną osobę. Dopiero wtedy Szadejkompas '
-                      'włącza GPS i odpytuje serwer domowy o jej ostatnią znaną pozycję. '
-                      'Strzałka wskazuje kierunek, a dystans liczony jest na żywo.',
+                      'Select a paired person from the list. Only then does Medicine Compass '
+                      'turn on GPS and poll the home server for their last known position. '
+                      'The arrow shows direction, and distance is calculated live.',
                       style: body,
                     ),
                     const SizedBox(height: 20),
-                    Text('Parowanie kodami QR', style: Theme.of(context).textTheme.titleLarge),
+                    Text('QR code pairing', style: Theme.of(context).textTheme.titleLarge),
                     const SizedBox(height: 8),
                     Text(
-                      'W zakładce „Dodaj” pokaż swój kod QR albo zeskanuj kod znajomego. '
-                      'Po skanowaniu druga osoba musi zaakceptować połączenie. '
-                      'Dopiero wtedy relacja działa dwustronnie — pojawiacie się u siebie na listach.',
+                      'In the Add tab, show your QR code or scan a friend\'s code. '
+                      'After scanning, the other person must accept the connection. '
+                      'Only then does the relationship work both ways — you appear on each other\'s lists.',
                       style: body,
                     ),
                     const SizedBox(height: 20),
-                    Text('Oszczędzanie baterii i danych', style: Theme.of(context).textTheme.titleLarge),
+                    Text('Battery and data saving', style: Theme.of(context).textTheme.titleLarge),
                     const SizedBox(height: 8),
                     Text(
-                      'Transmisja pozycji i odpytywanie serwera działają wyłącznie '
-                      'przy otwartym widoku kompasu wybranej osoby. W menu Lista / Dodaj / Info '
-                      'oraz gdy aplikacja jest w tle GPS przechodzi w uśpienie. '
-                      'Częstotliwość odświeżania zależy od dystansu: powyżej 1 km co 60 s, '
-                      '100–1000 m co 10 s, poniżej 100 m co 5 s.',
+                      'Location transmission and server polling run only '
+                      'while the compass view for the selected person is open. '
+                      'In List / Add / Info menus, and when the app is in the background, GPS goes to sleep. '
+                      'Refresh frequency depends on distance: under 100 m every 2 s, '
+                      '100–1000 m every 5 s, over 1000 m every 30 s.',
                       style: body,
                     ),
                     const SizedBox(height: 32),
-                    Text('Motyw', style: Theme.of(context).textTheme.titleLarge),
+                    Text('Theme', style: Theme.of(context).textTheme.titleLarge),
                     const SizedBox(height: 12),
                     _ThemeOption(
                       palette: palette,
-                      label: 'Ciemny',
+                      label: 'Dark',
                       selected: palette.isDark,
                       onTap: () => settings.setTheme(AppThemeMode.dark),
                     ),
                     const SizedBox(height: 8),
                     _ThemeOption(
                       palette: palette,
-                      label: 'Jasny',
+                      label: 'Light',
                       selected: !palette.isDark,
                       onTap: () => settings.setTheme(AppThemeMode.light),
                     ),
@@ -1773,7 +1951,7 @@ class _InfoContent extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
               child: Text(
-                'autor: kamilszadejko@gmail.com',
+                'author: kamilszadejko@gmail.com',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
@@ -1831,7 +2009,7 @@ class _ThemeOption extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Widok kompasu
+// Compass view
 // ---------------------------------------------------------------------------
 
 class _CompassView extends StatelessWidget {
@@ -1869,13 +2047,13 @@ class _CompassView extends StatelessWidget {
 
     if (!permissionGranted || currentPosition == null) {
       final text = gpsSearchTimeout
-          ? 'zacznij iść, aby pomóc w nawiązaniu połączenia GPS'
-          : 'kalkulowanie sygnałów z satelitów';
+          ? 'Start walking to help establish a GPS connection'
+          : 'Calculating satellite signals';
       return _msg(Icons.gps_fixed, palette.accent, text);
     }
 
     if (deviceHeading == null) {
-      return _msg(Icons.explore, palette.accent, 'Kalibruję kompas...\nObróć telefon w kształcie ósemki.');
+      return _msg(Icons.explore, palette.accent, 'Calibrating compass...\nMove your phone in a figure-eight.');
     }
 
     if (distance == null) {
@@ -1883,8 +2061,8 @@ class _CompassView extends StatelessWidget {
         Icons.cloud_off,
         palette.accent,
         usingCachedLocation
-            ? 'Brak aktualnej pozycji osoby.\nOstatnia znana: ${_formatClock(locationFetchedAt)}'
-            : 'Pobieram pozycję osoby...',
+            ? 'No current location for this person.\nLast known: ${_formatClock(locationFetchedAt)}'
+            : 'Fetching person\'s location...',
       );
     }
 
@@ -1896,7 +2074,7 @@ class _CompassView extends StatelessWidget {
             Icon(Icons.check_circle, size: 160, color: palette.success),
             const SizedBox(height: 24),
             Text(
-              'Osiągnięto cel, rozejrzyj się.',
+              'Destination reached — look around.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.headlineMedium,
             ),
@@ -1917,7 +2095,7 @@ class _CompassView extends StatelessWidget {
           if (usingCachedLocation && locationFetchedAt != null) ...[
             const SizedBox(height: 8),
             Text(
-              'Ostatnia znana pozycja: ${_formatClock(locationFetchedAt)}',
+              'Last known position: ${_formatClock(locationFetchedAt)}',
               style: TextStyle(color: Colors.orange.shade300, fontSize: 13),
             ),
           ],
