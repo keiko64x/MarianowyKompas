@@ -24,9 +24,6 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Generate launcher icons
-        run: dart run flutter_launcher_icons
-
       - name: Build APK
         run: flutter build apk --release --target-platform android-arm64
 
@@ -51,6 +48,35 @@ jobs:
           if [ ! -f ios/Runner.xcodeproj/project.pbxproj ]; then
             flutter create . --project-name medicine_compass --org net.szadejko --platforms=ios
           fi
+
+      - name: Set iOS deployment target 15.5
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          podfile = Path('ios/Podfile')
+          if podfile.exists():
+              text = podfile.read_text(encoding='utf-8')
+              text = re.sub(r'^#?\s*platform :ios,.*$', "platform :ios, '15.5'", text, flags=re.M)
+              if "platform :ios" not in text:
+                  text = "platform :ios, '15.5'\n" + text
+              podfile.write_text(text, encoding='utf-8')
+              print('Podfile updated')
+          else:
+              print('Podfile missing')
+
+          pbx = Path('ios/Runner.xcodeproj/project.pbxproj')
+          if pbx.exists():
+              text = pbx.read_text(encoding='utf-8')
+              text = re.sub(
+                  r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;',
+                  'IPHONEOS_DEPLOYMENT_TARGET = 15.5;',
+                  text,
+              )
+              pbx.write_text(text, encoding='utf-8')
+              print('project.pbxproj updated')
+          PY
 
       - name: Install dependencies
         run: flutter pub get

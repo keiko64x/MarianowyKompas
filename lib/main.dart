@@ -20,7 +20,6 @@ import 'utils/spirit_names.dart';
 // ---------------------------------------------------------------------------
 
 const double arrivalRadiusMeters = 5.0;
-const String _logoAsset = 'ikony/android/playstore-icon.png';
 const Duration _kMenuAnimDuration = Duration(milliseconds: 400);
 const double _kWelcomeTitleHeight = 66;
 const double _kHeaderTitleHeight = 89;
