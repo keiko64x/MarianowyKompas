@@ -22,7 +22,8 @@ import 'utils/spirit_names.dart';
 const double arrivalRadiusMeters = 5.0;
 const String _logoAsset = 'ikony/android/playstore-icon.png';
 const Duration _kMenuAnimDuration = Duration(milliseconds: 400);
-const double _kWelcomeLogoHeight = 132;
+const double _kWelcomeTitleHeight = 66;
+const double _kHeaderTitleHeight = 89;
 const double _kSquareButtonSize = 72;
 const Duration _kPendingPollInterval = Duration(seconds: 20);
 
@@ -215,7 +216,21 @@ class _WelcomeScreenState extends State<_WelcomeScreen> {
               child: Column(
                 children: [
                   const Spacer(flex: 2),
-                  Image.asset(_logoAsset, height: _kWelcomeLogoHeight, fit: BoxFit.contain),
+                  SizedBox(
+                    height: _kWelcomeTitleHeight,
+                    child: Center(
+                      child: Text(
+                        'Medicine Compass',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          color: palette.textPrimary,
+                          height: 1.1,
+                        ),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 32),
                   Text(
                     'Medicine Compass is a real-time people radar. '
@@ -911,8 +926,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   Widget _buildLogoHeader() {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 11.4, horizontal: 22.8),
-      child: Image.asset(_logoAsset, height: 178.6, fit: BoxFit.contain),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 22.8),
+      child: SizedBox(
+        height: _kHeaderTitleHeight,
+        child: Center(
+          child: Text(
+            'Medicine Compass',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 26,
+              fontWeight: FontWeight.bold,
+              color: _palette.textPrimary,
+              height: 1.1,
+            ),
+          ),
+        ),
+      ),
     );
   }
 

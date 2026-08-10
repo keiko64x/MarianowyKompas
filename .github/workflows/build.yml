@@ -1,11 +1,11 @@
-name: Build APK
+name: Build APK & iOS
 
 on:
   push:
     branches: [ main ]
 
 jobs:
-  build:
+  build-android:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,11 +24,85 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build APK
-        run: flutter build apk --target-platform android-arm64
+      - name: Generate launcher icons
+        run: dart run flutter_launcher_icons
 
-      - name: Upload APK
+      - name: Build APK
+        run: flutter build apk --release --target-platform android-arm64
+
+      - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-arm64-release
+          name: medicine-compass-android-arm64
           path: build/app/outputs/flutter-apk/app-release.apk
+
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Ensure full iOS project
+        run: |
+          if [ ! -f ios/Runner.xcodeproj/project.pbxproj ]; then
+            flutter create . --project-name medicine_compass --org net.szadejko --platforms=ios
+          fi
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate launcher icons
+        run: dart run flutter_launcher_icons
+
+      - name: Patch iOS Info.plist
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+          path = Path('ios/Runner/Info.plist')
+          text = path.read_text(encoding='utf-8')
+          text = re.sub(
+              r'(<key>CFBundleDisplayName</key>\s*<string>)[^<]+(</string>)',
+              r'\1Medicine Compass\2',
+              text,
+          )
+          text = re.sub(
+              r'(<key>CFBundleName</key>\s*<string>)[^<]+(</string>)',
+              r'\1Medicine Compass\2',
+              text,
+          )
+          if 'NSCameraUsageDescription' not in text:
+              inject = "\t<key>NSCameraUsageDescription</key>\n\t<string>Medicine Compass needs the camera to scan friend QR codes for pairing.</string>\n"
+              text = text.replace('</dict>\n</plist>', inject + '</dict>\n</plist>')
+          if 'NSLocationWhenInUseUsageDescription' not in text:
+              inject = "\t<key>NSLocationWhenInUseUsageDescription</key>\n\t<string>Medicine Compass needs your location to show direction and distance to a paired person.</string>\n"
+              text = text.replace('</dict>\n</plist>', inject + '</dict>\n</plist>')
+          else:
+              text = re.sub(
+                  r'(<key>NSLocationWhenInUseUsageDescription</key>\s*<string>)[^<]+(</string>)',
+                  r'\1Medicine Compass needs your location to show direction and distance to a paired person.\2',
+                  text,
+              )
+          path.write_text(text, encoding='utf-8')
+          print('Info.plist patched')
+          PY
+
+      - name: Build iOS (unsigned)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package unsigned iOS app
+        run: |
+          mkdir -p payload
+          cp -R build/ios/iphoneos/Runner.app payload/MedicineCompass.app
+          cd payload
+          zip -r ../MedicineCompass-ios-unsigned.zip MedicineCompass.app
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: medicine-compass-ios-unsigned
+          path: MedicineCompass-ios-unsigned.zip
