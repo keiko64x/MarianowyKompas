@@ -276,6 +276,11 @@ function createKompasStore(dataDir) {
     });
   }
 
+  function _finiteOrNull(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+
   async function updateLocation(userId, payload) {
     const lat = Number(payload.lat);
     const lng = Number(payload.lng);
@@ -284,24 +289,48 @@ function createKompasStore(dataDir) {
       err.status = 400;
       throw err;
     }
-    const accuracy =
-      payload.accuracy === undefined || payload.accuracy === null
-        ? null
-        : Number(payload.accuracy);
-    const timestamp = payload.timestamp
-      ? new Date(payload.timestamp).toISOString()
-      : nowIso();
+    // Compact keys (acc/spd/hdg/t) and legacy long names both accepted.
+    const accuracy = _finiteOrNull(
+      payload.acc !== undefined ? payload.acc : payload.accuracy,
+    );
+    const speed = _finiteOrNull(
+      payload.spd !== undefined ? payload.spd : payload.speed,
+    );
+    const heading = _finiteOrNull(
+      payload.hdg !== undefined ? payload.hdg : payload.heading,
+    );
+    const rawTs = payload.t || payload.timestamp;
+    const timestamp = rawTs ? new Date(rawTs).toISOString() : nowIso();
 
-    db.locations[userId] = {
-      lat,
-      lng,
-      accuracy: Number.isFinite(accuracy) ? accuracy : null,
+    const next = {
+      lat: Math.round(lat * 1e6) / 1e6,
+      lng: Math.round(lng * 1e6) / 1e6,
+      accuracy: accuracy === null ? null : Math.round(accuracy * 10) / 10,
+      speed: speed === null || speed < 0 ? null : Math.round(speed * 10) / 10,
+      heading:
+        heading === null || heading < 0
+          ? null
+          : Math.round((((heading % 360) + 360) % 360) * 10) / 10,
       timestamp,
     };
+
+    const prev = db.locations[userId];
+    // Skip disk write when the fix is effectively identical (saves I/O).
+    const unchanged =
+      prev &&
+      prev.lat === next.lat &&
+      prev.lng === next.lng &&
+      prev.accuracy === next.accuracy &&
+      prev.speed === next.speed &&
+      prev.heading === next.heading;
+
+    db.locations[userId] = next;
     if (db.users[userId]) {
       db.users[userId].updatedAt = nowIso();
     }
-    await persist();
+    if (!unchanged) {
+      await persist();
+    }
     return db.locations[userId];
   }
 
@@ -319,7 +348,16 @@ function createKompasStore(dataDir) {
     }
     return {
       userId: targetUserId,
-      ...loc,
+      lat: loc.lat,
+      lng: loc.lng,
+      acc: loc.accuracy,
+      spd: loc.speed ?? null,
+      hdg: loc.heading ?? null,
+      // Legacy aliases for older clients.
+      accuracy: loc.accuracy,
+      speed: loc.speed ?? null,
+      heading: loc.heading ?? null,
+      timestamp: loc.timestamp,
       fetchedAt: nowIso(),
       lastActivityLabel: formatActivity(loc.timestamp),
     };

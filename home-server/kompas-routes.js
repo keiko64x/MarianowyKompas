@@ -151,8 +151,9 @@ function createKompasRouter(dataDir) {
 
   router.post('/location/update', requireKompasAuth, async (req, res) => {
     try {
-      const location = await store.updateLocation(req.kompasUser.userId, req.body || {});
-      return res.json({ ok: true, location });
+      await store.updateLocation(req.kompasUser.userId, req.body || {});
+      // Compact OK — avoid echoing the full fix (saves cellular uplink+downlink).
+      return res.json({ ok: true });
     } catch (err) {
       return res.status(err.status || 500).json({ error: err.message || 'Błąd lokalizacji' });
     }
@@ -164,6 +165,12 @@ function createKompasRouter(dataDir) {
         req.kompasUser.userId,
         String(req.params.targetUserId),
       );
+      const etag = `"${location.timestamp}"`;
+      res.set('ETag', etag);
+      res.set('Cache-Control', 'private, no-cache');
+      if (req.headers['if-none-match'] === etag) {
+        return res.status(304).end();
+      }
       return res.json(location);
     } catch (err) {
       return res.status(err.status || 500).json({ error: err.message || 'Błąd pobierania pozycji' });

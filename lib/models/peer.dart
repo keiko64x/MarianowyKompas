@@ -81,32 +81,45 @@ class PeerLocation {
     required this.latitude,
     required this.longitude,
     this.accuracy,
+    this.speed,
+    this.heading,
     this.timestamp,
     this.fetchedAt,
     this.lastActivityLabel,
+    this.etag,
   });
 
   final String userId;
   final double latitude;
   final double longitude;
   final double? accuracy;
+  /// meters/second when known
+  final double? speed;
+  /// degrees clockwise from north when known
+  final double? heading;
   final DateTime? timestamp;
   final DateTime? fetchedAt;
   final String? lastActivityLabel;
+  final String? etag;
 
-  factory PeerLocation.fromJson(Map<String, dynamic> json) {
+  factory PeerLocation.fromJson(Map<String, dynamic> json, {String? etag}) {
+    final ts = json['timestamp'] ?? json['t'];
+    final acc = json['accuracy'] ?? json['acc'];
+    final spd = json['speed'] ?? json['spd'];
+    final hdg = json['heading'] ?? json['hdg'];
     return PeerLocation(
       userId: json['userId'] as String? ?? '',
       latitude: (json['lat'] as num).toDouble(),
       longitude: (json['lng'] as num).toDouble(),
-      accuracy: (json['accuracy'] as num?)?.toDouble(),
-      timestamp: json['timestamp'] != null
-          ? DateTime.tryParse(json['timestamp'] as String)
-          : null,
+      accuracy: (acc as num?)?.toDouble(),
+      speed: (spd as num?)?.toDouble(),
+      heading: (hdg as num?)?.toDouble(),
+      timestamp: ts != null ? DateTime.tryParse(ts as String) : null,
       fetchedAt: json['fetchedAt'] != null
           ? DateTime.tryParse(json['fetchedAt'] as String)
           : DateTime.now(),
       lastActivityLabel: json['lastActivityLabel'] as String?,
+      etag: etag ?? (ts is String ? ts : null),
     );
   }
 }

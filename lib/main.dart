@@ -341,6 +341,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Timer? _gpsSearchTimer;
   Timer? _pollTimer;
   Timer? _pendingTimer;
+  Timer? _extrapolationTick;
   bool _handlingPending = false;
   final Set<String> _seenRequestIds = {};
 
@@ -358,6 +359,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _stopCompassTracking();
+    unawaited(_locationShare.setPriorityMode(false));
     unawaited(_locationShare.stop());
     _pendingTimer?.cancel();
     _network.dispose();
@@ -380,8 +382,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         break;
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
-        // Keep sharing GPS in background; only pause compass/peer polling.
+        // Keep sharing GPS in background; throttle to non-priority cadence
+        // and pause compass/peer polling to save cellular data.
         _stopCompassTracking(keepCompassMode: true);
+        unawaited(_locationShare.setPriorityMode(false));
         _pendingTimer?.cancel();
       case AppLifecycleState.detached:
         _stopCompassTracking();
@@ -576,11 +580,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _cancelGpsSearchTimer();
     _pollTimer?.cancel();
     _pollTimer = null;
+    _extrapolationTick?.cancel();
+    _extrapolationTick = null;
     _compassSubscription?.cancel();
     _compassSubscription = null;
     if (!keepCompassMode) {
       _compassPermissionGranted = false;
       _deviceHeading = null;
+      unawaited(_locationShare.setPriorityMode(false));
     }
   }
 
@@ -610,8 +617,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   Future<void> _startCompassSession(Peer peer) async {
     _stopCompassTracking(keepCompassMode: true);
+    await _locationShare.setPriorityMode(true);
     await _ensureLocationSharing();
     _startGpsSearchTimer();
+    _startExtrapolationTick();
 
     final ok = await _locationShare.ensurePermission();
     if (!ok) {
@@ -645,16 +654,34 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       },
     );
 
+    // One fresh self-upload when opening compass; afterwards the adaptive
+    // share service handles uploads without doubling every peer poll.
     await _locationShare.uploadNow();
     await _pollOnce(peer);
     _scheduleNextPoll(peer);
+  }
+
+  void _startExtrapolationTick() {
+    _extrapolationTick?.cancel();
+    // Cheap local UI refresh so the arrow coasts between network polls.
+    _extrapolationTick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !_isCompassActive) return;
+      final peer = _livePeerLocation;
+      if (peer == null) return;
+      if ((peer.speed ?? 0) < 0.4) return;
+      setState(() {});
+    });
   }
 
   void _scheduleNextPoll(Peer peer) {
     _pollTimer?.cancel();
     if (!_isCompassActive) return;
     final distance = _distanceToTarget();
-    final wait = pollingIntervalForDistance(distance);
+    final wait = pollingIntervalForDistance(
+      distance,
+      peerSpeedMps: _livePeerLocation?.speed,
+      peerFixTime: _livePeerLocation?.timestamp,
+    );
     _pollTimer = Timer(wait, () async {
       if (!_isCompassActive || _compassPeer?.userId != peer.userId) return;
       await _pollOnce(peer);
@@ -663,11 +690,23 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _pollOnce(Peer peer) async {
-    await _locationShare.uploadNow();
-
     try {
-      final loc = await _network.fetchLocation(peer.userId);
+      final loc = await _network.fetchLocation(
+        peer.userId,
+        ifNoneMatch: _livePeerLocation?.etag ??
+            _livePeerLocation?.timestamp?.toIso8601String(),
+      );
       if (!mounted || _compassPeer?.userId != peer.userId) return;
+
+      // 304 Not Modified — peer fix unchanged; keep local state, save data.
+      if (loc == null) {
+        setState(() {
+          _usingCachedPeerLocation = false;
+          _networkBanner = null;
+        });
+        return;
+      }
+
       final updatedPeers = _peers.map((p) {
         if (p.userId != peer.userId) return p;
         return p.copyWith(
@@ -719,6 +758,21 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// Peer lat/lng with short dead-reckoning coast between network polls.
+  ({double lat, double lng})? _effectivePeerPoint() {
+    final target = _livePeerLocation;
+    if (target == null) return null;
+    final coast = extrapolatePeerPosition(
+      lat: target.latitude,
+      lng: target.longitude,
+      speedMps: target.speed,
+      headingDegrees: target.heading,
+      fixTime: target.timestamp,
+    );
+    if (coast != null) return coast;
+    return (lat: target.latitude, lng: target.longitude);
+  }
+
   void _startGpsSearchTimer() {
     _gpsSearchTimer?.cancel();
     _gpsSearchTimer = Timer(const Duration(minutes: 1), () {
@@ -734,25 +788,25 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   double? _distanceToTarget() {
     final me = _currentPosition ?? _lastKnownPosition;
-    final target = _livePeerLocation;
+    final target = _effectivePeerPoint();
     if (me == null || target == null) return null;
     return haversineMeters(
       me.latitude,
       me.longitude,
-      target.latitude,
-      target.longitude,
+      target.lat,
+      target.lng,
     );
   }
 
   double? _arrowRotationDegrees() {
     final me = _currentPosition ?? _lastKnownPosition;
-    final target = _livePeerLocation;
+    final target = _effectivePeerPoint();
     if (me == null || target == null || _deviceHeading == null) return null;
     final bearing = Geolocator.bearingBetween(
       me.latitude,
       me.longitude,
-      target.latitude,
-      target.longitude,
+      target.lat,
+      target.lng,
     );
     return (bearing - _deviceHeading! + 360) % 360;
   }
@@ -1984,9 +2038,10 @@ class _InfoContent extends StatelessWidget {
                     const SizedBox(height: 8),
                     Text(
                       'Your location is shared while the app process is alive (including when you switch apps). '
+                      'Uploads adapt to movement: sparse when you stand still, denser when you walk or open the compass. '
                       'Android shows a persistent notification so GPS can keep running. '
-                      'Polling the other person happens only in the compass view: '
-                      'under 100 m every 2 s, 100–1000 m every 5 s, over 1000 m every 30 s. '
+                      'The compass view polls a friend only as often as distance and speed require, '
+                      'and skips downloading when their position has not changed. '
                       'Force-closing the app stops sharing.',
                       style: body,
                     ),

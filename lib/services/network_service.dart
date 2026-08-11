@@ -183,34 +183,82 @@ class NetworkService {
     );
   }
 
+  /// Compact location upload (~120–180 bytes body).
   Future<void> updateLocation({
     required double lat,
     required double lng,
     double? accuracy,
+    double? speed,
+    double? heading,
     DateTime? timestamp,
   }) async {
+    final payload = <String, dynamic>{
+      'lat': double.parse(lat.toStringAsFixed(6)),
+      'lng': double.parse(lng.toStringAsFixed(6)),
+      't': (timestamp ?? DateTime.now()).toUtc().toIso8601String(),
+    };
+    if (accuracy != null && accuracy.isFinite) {
+      payload['acc'] = double.parse(accuracy.toStringAsFixed(1));
+    }
+    if (speed != null && speed.isFinite && speed >= 0) {
+      payload['spd'] = double.parse(speed.toStringAsFixed(1));
+    }
+    if (heading != null && heading.isFinite && heading >= 0) {
+      payload['hdg'] = double.parse(heading.toStringAsFixed(1));
+    }
+
     await _json(
       () => _client.post(
         _uri('/location/update'),
         headers: _authHeaders,
-        body: jsonEncode({
-          'lat': lat,
-          'lng': lng,
-          'accuracy': accuracy,
-          'timestamp': (timestamp ?? DateTime.now()).toUtc().toIso8601String(),
-        }),
+        body: jsonEncode(payload),
       ),
     );
   }
 
-  Future<PeerLocation> fetchLocation(String targetUserId) async {
-    final body = await _json(
-      () => _client.get(
-        _uri('/location/$targetUserId'),
-        headers: _authHeaders,
-      ),
-    );
-    return PeerLocation.fromJson(body);
+  /// Returns null when the peer fix is unchanged (HTTP 304) — saves cellular data.
+  Future<PeerLocation?> fetchLocation(
+    String targetUserId, {
+    String? ifNoneMatch,
+  }) async {
+    try {
+      final headers = Map<String, String>.from(_authHeaders);
+      if (ifNoneMatch != null && ifNoneMatch.isNotEmpty) {
+        headers['If-None-Match'] = ifNoneMatch.startsWith('"')
+            ? ifNoneMatch
+            : '"$ifNoneMatch"';
+      }
+
+      final response = await _client
+          .get(_uri('/location/$targetUserId'), headers: headers)
+          .timeout(const Duration(seconds: 12));
+
+      if (response.statusCode == 304) {
+        return null;
+      }
+
+      Map<String, dynamic> body = {};
+      if (response.body.isNotEmpty) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) body = decoded;
+      }
+
+      if (response.statusCode != 200) {
+        throw NetworkException(
+          body['error']?.toString() ?? 'Błąd serwera (${response.statusCode})',
+          statusCode: response.statusCode,
+        );
+      }
+
+      final etag = response.headers['etag']?.replaceAll('"', '');
+      return PeerLocation.fromJson(body, etag: etag);
+    } on TimeoutException {
+      throw NetworkException('Brak odpowiedzi serwera (timeout)', offline: true);
+    } on http.ClientException catch (e) {
+      throw NetworkException('Brak zasięgu sieci: ${e.message}', offline: true);
+    } on FormatException {
+      throw NetworkException('Nieprawidłowa odpowiedź serwera');
+    }
   }
 
   void dispose() => _client.close();

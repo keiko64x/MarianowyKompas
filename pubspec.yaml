@@ -1,7 +1,7 @@
 name: medicine_compass
 description: Medicine Compass — peer-to-peer people radar with real-time GPS navigation.
 publish_to: 'none'
-version: 1.1.0+14
+version: 1.2.0+15
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
